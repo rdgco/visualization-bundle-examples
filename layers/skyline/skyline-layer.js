@@ -25,6 +25,7 @@ import City, { parseColorGL } from './lib/city.js';
 
 export const key = 'skyline';
 export const label = 'City Skyline';
+export const description = 'Procedural night-time city skyline. Hundreds of buildings of varied shapes (boxes, cylinders, stepped towers) with lit windows, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
 export const wantsContext = 'webgl';
 
 /**

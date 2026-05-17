@@ -18,6 +18,7 @@ After install, every layer here becomes loadable in the harness via
 | Layer | Type | Notes |
 |---|---|---|
 | `skyline` | WebGL 3D | Procedural night-time city; canonical "real shader-driven layer" reference. See [`layers/skyline/README.md`](layers/skyline/README.md). |
+| `vibrations` | 2D Canvas | Concentric stroked shapes, audio-driven radial vibration in four modes, three reactions. Canonical 2D contract reference; the colocated test locks in the per-frame ctx invariant. See [`layers/vibrations/README.md`](layers/vibrations/README.md). |
 
 More layers will land here over time. Each one ships as a directory
 under `layers/<name>/` with the contract entry at
@@ -33,6 +34,10 @@ layers/
     skyline-layer.js     contract entry
     lib/                 renderer code
     README.md            per-layer reference
+  vibrations/
+    vibrations-layer.js       contract entry
+    vibrations-layer.test.js  per-frame ctx invariant tests
+    README.md                 per-layer reference
 README.md                this file
 ```
 

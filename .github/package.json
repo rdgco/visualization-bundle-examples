@@ -1,0 +1,10 @@
+{
+  "name": "visualization-bundle-examples-ci",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev/CI tooling for visualization-bundle-examples. Not consumed by `visual-bundle install` — that reads the bundle as a git clone, not via npm. This `package.json` is scoped to `.github/` so the bundle root stays manifest-free per the bundle convention.",
+  "dependencies": {
+    "visualization-layer-core": "github:rdgco/visualization-layer-core#v0.2.0"
+  }
+}

@@ -1,0 +1,9 @@
+# CI dev dependencies — populated by .github/workflows/ci.yml and
+# `cd .github && npm install` locally. The bundle root stays
+# manifest-free per the bundle convention, and the .github subdir
+# is just for dev/CI tooling.
+.github/node_modules/
+.github/package-lock.json
+
+# OS noise
+.DS_Store

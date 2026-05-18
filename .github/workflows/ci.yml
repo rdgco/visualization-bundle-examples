@@ -1,0 +1,57 @@
+name: CI
+
+# Runs the visualization-layer-core contract validator against every
+# layer in `layers/*/`. Fails the PR / push if any layer has
+# contract violations — catches the class of bug that previously
+# slipped through to downstream consumers at first install.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+
+      # `visualization-layer-core` is a private sibling repo. CI loads
+      # a deploy-key (read-only, scoped to that repo) into ssh-agent
+      # so the natural `github:` URL in `.github/package.json` resolves
+      # without auth jujitsu. Same pattern as midi-daddy + harness CI.
+      #
+      # Setup (operator-side, one-time):
+      #   1. Generate an SSH keypair scoped to this repo.
+      #   2. Add the public key to `visualization-layer-core` as a
+      #      read-only deploy key.
+      #   3. Add the private key to this repo's secrets as
+      #      `LAYER_CORE_DEPLOY_KEY`.
+      - name: Load visualization-layer-core deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.LAYER_CORE_DEPLOY_KEY }}
+
+      # CI's dev dependencies live in `.github/package.json` so the
+      # bundle root stays manifest-free per the bundle convention.
+      # `visual-bundle install` reads the bundle as a git clone — it
+      # never sees `.github/`.
+      - name: Install CI dependencies
+        working-directory: .github
+        run: npm install --no-package-lock
+
+      - name: Validate every layer
+        working-directory: .github
+        run: node scripts/validate-bundle.mjs

@@ -11,6 +11,13 @@
  * structure that applyVignette() / setVignetteConfig() expects.
  *
  * Defaults here MUST match VIGNETTE_DEFAULTS in ProgramEditor.js.
+ *
+ * Param grouping: each entry declares `paramGroup` so a contract-
+ * aware inspector renders Shape / Frame / Glass as three separately
+ * collapsible sections. The first entry in each group also declares
+ * `paramGroupLabel` (later entries in the same group merge from the
+ * first). Convention formalized in visualization-layer-core v0.4.0
+ * (PR #16) and mirrors midi-daddy's existing ParamForm.js consumer.
  */
 
 const MOD_ALL = {
@@ -22,17 +29,20 @@ export const vignetteSchema = {
   sizeX: {
     type: 'number', label: 'Horizontal Radius',
     min: 0, max: 100, default: 50, step: 1,
-    modulation: { ...MOD_ALL, defaultAmount: 20 }
+    modulation: { ...MOD_ALL, defaultAmount: 20 },
+    paramGroup: 'shape', paramGroupLabel: 'Shape'
   },
   sizeY: {
     type: 'number', label: 'Vertical Radius',
     min: 0, max: 100, default: 50, step: 1,
-    modulation: { ...MOD_ALL, defaultAmount: 20 }
+    modulation: { ...MOD_ALL, defaultAmount: 20 },
+    paramGroup: 'shape'
   },
   softness: {
     type: 'number', label: 'Softness',
     min: 0, max: 100, default: 0, step: 1,
-    modulation: { ...MOD_ALL, defaultAmount: 15 }
+    modulation: { ...MOD_ALL, defaultAmount: 15 },
+    paramGroup: 'shape'
   },
 
   // --- Frame (border) params ---
@@ -44,37 +54,44 @@ export const vignetteSchema = {
       colorMode: 'hueShift',
       colorModes: ['hueShift', 'rgbDelta'],
       defaultAmount: 30
-    }
+    },
+    paramGroup: 'frame', paramGroupLabel: 'Frame'
   },
   'frame.opacity': {
     type: 'number', label: 'Frame Opacity',
     min: 0, max: 1, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.3 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.3 },
+    paramGroup: 'frame'
   },
   'frame.blur': {
     type: 'number', label: 'Frame Blur',
     min: 0, max: 30, default: 0, step: 0.5,
-    modulation: { ...MOD_ALL, defaultAmount: 8 }
+    modulation: { ...MOD_ALL, defaultAmount: 8 },
+    paramGroup: 'frame'
   },
   'frame.brightness': {
     type: 'number', label: 'Frame Brightness',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'frame'
   },
   'frame.contrast': {
     type: 'number', label: 'Frame Contrast',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'frame'
   },
   'frame.saturate': {
     type: 'number', label: 'Frame Saturate',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'frame'
   },
   'frame.hueRotate': {
     type: 'number', label: 'Frame Hue Rotate',
     min: 0, max: 360, default: 0, step: 1,
-    modulation: { ...MOD_ALL, defaultAmount: 60 }
+    modulation: { ...MOD_ALL, defaultAmount: 60 },
+    paramGroup: 'frame'
   },
 
   // --- Glass (center) params ---
@@ -86,52 +103,62 @@ export const vignetteSchema = {
       colorMode: 'hueShift',
       colorModes: ['hueShift', 'rgbDelta'],
       defaultAmount: 30
-    }
+    },
+    paramGroup: 'glass', paramGroupLabel: 'Glass'
   },
   'glass.opacity': {
     type: 'number', label: 'Glass Opacity',
     min: 0, max: 1, default: 0, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.3 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.3 },
+    paramGroup: 'glass'
   },
   'glass.blur': {
     type: 'number', label: 'Glass Blur',
     min: 0, max: 30, default: 0, step: 0.5,
-    modulation: { ...MOD_ALL, defaultAmount: 8 }
+    modulation: { ...MOD_ALL, defaultAmount: 8 },
+    paramGroup: 'glass'
   },
   'glass.brightness': {
     type: 'number', label: 'Glass Brightness',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'glass'
   },
   'glass.contrast': {
     type: 'number', label: 'Glass Contrast',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'glass'
   },
   'glass.saturate': {
     type: 'number', label: 'Glass Saturate',
     min: 0, max: 3, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'glass'
   },
   'glass.hueRotate': {
     type: 'number', label: 'Glass Hue Rotate',
     min: 0, max: 360, default: 0, step: 1,
-    modulation: { ...MOD_ALL, defaultAmount: 60 }
+    modulation: { ...MOD_ALL, defaultAmount: 60 },
+    paramGroup: 'glass'
   },
   'glass.lens': {
     type: 'number', label: 'Glass Lens',
     min: -20, max: 20, default: 0, step: 0.1,
-    modulation: { ...MOD_ALL, defaultAmount: 3 }
+    modulation: { ...MOD_ALL, defaultAmount: 3 },
+    paramGroup: 'glass'
   },
   'glass.lensPower': {
     type: 'number', label: 'Glass Lens Power',
     min: 0.1, max: 20, default: 2, step: 0.1,
-    modulation: { ...MOD_ALL, defaultAmount: 4 }
+    modulation: { ...MOD_ALL, defaultAmount: 4 },
+    paramGroup: 'glass'
   },
   'glass.zoom': {
     type: 'number', label: 'Glass Zoom',
     min: 0.05, max: 20, default: 1, step: 0.05,
-    modulation: { ...MOD_ALL, defaultAmount: 0.5 }
+    modulation: { ...MOD_ALL, defaultAmount: 0.5 },
+    paramGroup: 'glass'
   }
 };
 

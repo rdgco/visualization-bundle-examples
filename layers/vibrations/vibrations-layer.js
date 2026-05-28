@@ -423,10 +423,10 @@ export default class VibrationsLayer {
     }
   }
 
-  onReaction(name, args) {
+  react(key, args, _eventContext) {
     const a = args || {};
     const now = performance.now();
-    switch (name) {
+    switch (key) {
       case 'pulse': {
         const hold = typeof a.holdMs === 'number' ? a.holdMs : 250;
         const intensity = typeof a.intensity === 'number' ? a.intensity : 0.7;
@@ -452,7 +452,7 @@ export default class VibrationsLayer {
         return;
       }
       default:
-        console.warn(`[vibrations] Unknown reaction '${name}'; declared: pulse, flash, shockwave`);
+        console.warn(`[vibrations] Unknown reaction '${key}'; declared: pulse, flash, shockwave`);
     }
   }
 

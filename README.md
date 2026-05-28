@@ -53,8 +53,9 @@ Pull requests welcome. The flow:
 1. Fork this repo.
 2. Add your layer under `layers/<your-layer-name>/`. Follow the
    contract shape — `key`, `label`, `params`, `reactions`, and a
-   default-export class with `init` / `render` / `onReaction` /
-   `cleanup` methods. See `layers/skyline/skyline-layer.js` for a
+   default-export class with `init` / `render` /
+   `react(key, args, eventContext)` / `cleanup` methods. See
+   `layers/skyline/skyline-layer.js` for a
    substantial reference.
 3. Smoke it in the harness against `bundle install <your-fork-url>`.
 4. Open a PR. Reviewers check contract conformance, code quality, and

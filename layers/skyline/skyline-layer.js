@@ -8,7 +8,7 @@
  *   - declares the layer's contract surface (key/label/params/reactions)
  *   - manages a viewProj-producing camera since the harness doesn't
  *     provide one
- *   - bridges the harness's `init / render / onReaction / cleanup`
+ *   - bridges the harness's `init / render / react / cleanup`
  *     lifecycle to the City's `constructor(gl, config) / update / render
  *     / react / cleanup` shape
  *   - translates harness-shaped param values into the City's expected
@@ -252,14 +252,14 @@ export default class SkylineLayer {
     this._city.render(ctx.camera.viewProjection);
   }
 
-  onReaction(name, args) {
-    if (name === 'pulse') {
+  react(key, args, eventContext) {
+    if (key === 'pulse') {
       // The City class accepts an eventContext object with a velocity
       // hint, used as the amplitude default when args.amplitude is
-      // absent. The harness doesn't carry a velocity through the
-      // contract, so we synthesize one matching the layer's default
-      // amplitude (0.7 ≈ a moderately-loud drum hit).
-      this._city.react('pulse', args || {}, { velocity: 90 });
+      // absent. Pass the host-supplied eventContext through; fall
+      // back to a synthesized mid-velocity (90 ≈ moderately-loud
+      // drum hit) when the host didn't carry one.
+      this._city.react('pulse', args || {}, eventContext || { velocity: 90 });
     }
   }
 

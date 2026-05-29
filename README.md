@@ -29,6 +29,7 @@ After install, every layer here becomes loadable in the harness via
 | `color-tint` | 2D Canvas | Overlays a configurable tint color over the source. The simplest possible filter — useful as a smoke test for the harness's filter pipeline. Demos color + number params with `modulation: true`. |
 | `invert` | 2D Canvas | Per-pixel RGB invert with adjustable strength. Exercises the `getImageData` / `putImageData` readback path (vs `color-tint`'s blit-only path). |
 | `vignette` | WebGL | GPU-rendered elliptical vignette with independent frame/glass tinting, blur, lens distortion, brightness/contrast/saturate/hue. Migrated from midi-daddy; canonical "real shader-driven filter" reference. |
+| `glitch` | 2D Canvas | Digital-glitch post-process. Canonical example of a filter that pairs a **modulatable param** (`intensity`, the continuous baseline) with a **reaction** (`burst`, a transient decaying spike), plus an enum `mode` (rgb-split / slice / blocks). |
 
 More layers and filters will land here over time. Each one ships as
 a directory under `layers/<name>/` or `filters/<name>/` with the
@@ -54,6 +55,8 @@ filters/
     invert-filter.js          contract entry
   vignette/
     vignette-filter.js        contract entry
+  glitch/
+    glitch-filter.js          contract entry (params + reaction)
     lib/                      shader sources + param schema
 
 README.md                this file

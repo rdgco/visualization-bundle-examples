@@ -34,7 +34,7 @@ import {
   LIGHT_VERT, LIGHT_FRAG
 } from './shaders.js';
 import { mulberry32, generateLayout } from './layout.js';
-import { generateBoxSegment, generateRoofTri, generateRoofQuad } from './geometry.js';
+import { buildFootprintPolygon, generatePrism, generateRoofTri, generateRoofQuad } from './geometry.js';
 
 // ============================================================================
 // Pulse-reaction wave constants
@@ -85,6 +85,11 @@ class City {
     this.lightColor = config.lightColor || [0.85, 0.65, 0.35];
     this.speed = config.speed ?? 1.0;
     this.curvature = config.curvature ?? 0.0;
+    this.footprintVariety = config.footprintVariety ?? 0.35;
+    this.allowEll = config.allowEll ?? true;
+    this.allowCylinder = config.allowCylinder ?? true;
+    this.facadeVariety = config.facadeVariety ?? 0.5;
+    this.lightFill = config.lightFill ?? 0.8;
 
     // Pulse-reaction state. Initialized before GL work so the wave fields
     // exist even if shader compilation throws — keeps react() callable
@@ -109,7 +114,11 @@ class City {
     if (this.lightVBO) gl.deleteBuffer(this.lightVBO);
 
     const rng = mulberry32(this.seed);
-    const layout = generateLayout(rng, { density: this.density, maxHeight: this.maxHeight });
+    const layout = generateLayout(rng, {
+      density: this.density, maxHeight: this.maxHeight,
+      footprintVariety: this.footprintVariety,
+      allowEll: this.allowEll, allowCylinder: this.allowCylinder
+    });
     this.citySize = layout.citySize;
     this.spacing = layout.spacing;
 
@@ -136,11 +145,14 @@ class City {
         segments.push({x: b.x + wox, z: b.z + woz, y: h1, w: uw, h: b.h - h1, d: ud});
       }
 
-      // Build geometry for each segment
+      // Build geometry for each segment. The footprint polygon is shared
+      // across taper segments; each segment scales it by its own w/d, so a
+      // tapered upper segment is the same shape shrunk concentrically.
+      const isBox = (b.footprint && b.footprint.type ? b.footprint.type : 'box') === 'box';
+      const poly = buildFootprintPolygon(b.footprint ? b.footprint.type : 'box', b.footprint || {});
       for (const s of segments) {
-        const scaleVec = [s.w, s.h, s.d];
-        generateBoxSegment(buildBuf, s.x, s.z, s.y, s.w, s.h, s.d, b.rot,
-          b.id, b.col, b.roofRng, scaleVec);
+        generatePrism(buildBuf, poly, s.x, s.z, s.y, s.w, s.d, s.h, b.rot,
+          b.id, b.col, b.roofRng);
       }
 
       // Roof on top segment
@@ -153,8 +165,12 @@ class City {
         return [top.x + wx * cr - wz * sr, y, top.z + wx * sr + wz * cr];
       };
 
+      // Varied roof shapes assume a rectangular top, so they're box-only.
+      // Non-box footprints wear their flat prism cap as the roof (the tallest
+      // still gets a spire/antenna feature at top-centre).
       let roofType;
       if (b.id === tallestId) roofType = 'spire';
+      else if (!isBox) roofType = 'flat';
       else {
         const r = b.roofRng;
         roofType = r < 0.55 ? 'flat' : r < 0.75 ? 'sloped' : r < 0.88 ? 'peaked' : r < 0.94 ? 'pyramid' : 'antenna';
@@ -314,6 +330,8 @@ class City {
     gl.uniform1f(sh.uniform('u_time'), this.time);
     gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
     gl.uniform3fv(sh.uniform('u_lightColor'), this.lightColor);
+    gl.uniform1f(sh.uniform('u_facadeVariety'), this.facadeVariety);
+    gl.uniform1f(sh.uniform('u_lightFill'), this.lightFill);
     gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
     gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
 
@@ -464,6 +482,11 @@ class City {
     if (config.seed !== undefined && config.seed !== this.seed) { this.seed = config.seed; needsRebuild = true; }
     if (config.density !== undefined && config.density !== this.density) { this.density = config.density; needsRebuild = true; }
     if (config.maxHeight !== undefined && config.maxHeight !== this.maxHeight) { this.maxHeight = config.maxHeight; needsRebuild = true; }
+    if (config.footprintVariety !== undefined && config.footprintVariety !== this.footprintVariety) { this.footprintVariety = config.footprintVariety; needsRebuild = true; }
+    if (config.allowEll !== undefined && config.allowEll !== this.allowEll) { this.allowEll = config.allowEll; needsRebuild = true; }
+    if (config.allowCylinder !== undefined && config.allowCylinder !== this.allowCylinder) { this.allowCylinder = config.allowCylinder; needsRebuild = true; }
+    if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;
+    if (config.lightFill !== undefined) this.lightFill = config.lightFill;
     if (config.lightRatio !== undefined) this.lightRatio = config.lightRatio;
     if (config.windowScale !== undefined) this.windowScale = config.windowScale;
     if (config.floorHeight !== undefined) this.floorHeight = config.floorHeight;
@@ -478,6 +501,8 @@ class City {
   }
 
   setModulatedValues(config) {
+    if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;
+    if (config.lightFill !== undefined) this.lightFill = config.lightFill;
     if (config.lightRatio !== undefined) this.lightRatio = config.lightRatio;
     if (config.windowScale !== undefined) this.windowScale = config.windowScale;
     if (config.streetGlow !== undefined) this.streetGlow = config.streetGlow;

@@ -30,8 +30,8 @@ export const CURVE_GLSL = `
 export const BUILDING_VERT = CURVE_GLSL + `
   attribute vec3 a_position;
   attribute vec3 a_normal;
-  attribute vec3 a_localPos;
-  attribute vec4 a_meta;     // buildingId, scaleX, scaleY, scaleZ
+  attribute vec3 a_localPos;  // faceU (0..1 along face), faceV (0..1 up segment), 0
+  attribute vec4 a_meta;      // buildingId, faceWidth, segmentHeight, reserved
   attribute vec3 a_color;
   attribute float a_variation;
 
@@ -67,6 +67,8 @@ export const BUILDING_FRAG = `
   uniform float u_time;
   uniform float u_sunIntensity;
   uniform vec3  u_lightColor;
+  uniform float u_facadeVariety;  // 0 = all standard punched windows; 1 = rich curtain-wall / small-gap mix
+  uniform float u_lightFill;      // fraction of each window pane that actually emits light
 
   // ---- Pulse-reaction surface waves ----
   // Up to 4 concurrent waves. Each slot's geometry is baked at injection
@@ -141,7 +143,8 @@ export const BUILDING_FRAG = `
 
   void main() {
     float buildingId = v_meta.x;
-    vec3 scale = v_meta.yzw;
+    float faceW = v_meta.y;   // physical width of this face (baked per vertex)
+    float segH  = v_meta.z;   // physical height of this segment
     vec3 n = normalize(v_normal);
     bool isSide = abs(n.y) < 0.5;
     bool isTop = n.y > 0.5;
@@ -163,24 +166,37 @@ export const BUILDING_FRAG = `
       return;
     }
 
-    // per-building window variation
+    // per-building window variation. faceU/faceV are baked by the geometry
+    // emitter (0..1 along the face width and up the segment), so the grid
+    // wraps any footprint — box, bevel, chop, ell, or cylinder facet.
     float localWS = u_windowScale * (0.7 + v_variation * 0.6);
     float localFH = u_floorHeight * (0.75 + hash2(vec2(buildingId, 3.0)) * 0.5);
 
-    float u, faceW;
-    float nx = abs(n.x), nz = abs(n.z);
-    if (nx > nz) { u = v_localPos.z + 0.5; faceW = scale.z; }
-    else          { u = v_localPos.x + 0.5; faceW = scale.x; }
-    float v = v_localPos.y;
+    float u = v_localPos.x;   // 0..1 along the face
+    float v = v_localPos.y;   // 0..1 up the segment
 
     float cols = max(1.0, floor(faceW / localWS));
-    float rows = max(1.0, floor(scale.y / localFH));
+    float rows = max(1.0, floor(segH / localFH));
     float cellU = u * cols, cellV = v * rows;
     float col = floor(cellU), row = floor(cellV);
     float inU = fract(cellU), inV = fract(cellV);
 
-    float mH = 0.2 + 0.07 * hash2(vec2(buildingId, 11.0));
-    float mV = 0.16 + 0.09 * hash2(vec2(buildingId, 13.0));
+    // Facade style per building, blended in by u_facadeVariety:
+    //   standard punched (wide borders) → small-gap → curtain wall (fine mullions).
+    float fHash = hash2(vec2(buildingId, 23.0));
+    float curtainCut = u_facadeVariety * 0.45;  // glassiest share
+    float gapCut     = u_facadeVariety;         // small-gap share; remainder standard
+    float mH, mV;
+    if (fHash < curtainCut) {
+      mH = 0.03 + 0.02 * hash2(vec2(buildingId, 24.0));   // curtain wall: panes nearly touch
+      mV = 0.03 + 0.02 * hash2(vec2(buildingId, 25.0));
+    } else if (fHash < gapCut) {
+      mH = 0.08 + 0.04 * hash2(vec2(buildingId, 24.0));   // small gaps
+      mV = 0.10 + 0.04 * hash2(vec2(buildingId, 25.0));
+    } else {
+      mH = 0.2 + 0.07 * hash2(vec2(buildingId, 11.0));    // standard punched windows
+      mV = 0.16 + 0.09 * hash2(vec2(buildingId, 13.0));
+    }
     bool inWindow = inU > mH && inU < (1.0-mH) && inV > mV && inV < (1.0-mV);
 
     if (!inWindow) {
@@ -206,13 +222,15 @@ export const BUILDING_FRAG = `
     effRatio *= 1.0 - 0.15 * (row / max(rows, 1.0));
     effRatio *= 0.3 + 0.7 * nightAmb;
 
+    // Glass / unlit-pane color — also the glazing that surrounds a lit fixture.
+    vec3 glass = v_color * 0.12 * nightAmb;
+    glass += vec3(0.008, 0.012, 0.022) * nightAmb;
+    glass += vec3(0.85, 0.65, 0.35) * streetLight * 0.12;
+    glass += v_color * (sunAmb * 0.5 + sunDiff * 0.3);
+    glass += vec3(0.4, 0.45, 0.55) * u_sunIntensity * 0.08;
+
     if (h >= effRatio) {
-      vec3 dark = v_color * 0.12 * nightAmb;
-      dark += vec3(0.008, 0.012, 0.022) * nightAmb;
-      dark += vec3(0.85, 0.65, 0.35) * streetLight * 0.12;
-      dark += v_color * (sunAmb * 0.5 + sunDiff * 0.3);
-      dark += vec3(0.4, 0.45, 0.55) * u_sunIntensity * 0.08;
-      gl_FragColor = vec4(dark, 1.0);
+      gl_FragColor = vec4(glass, 1.0);
       return;
     }
 
@@ -233,7 +251,24 @@ export const BUILDING_FRAG = `
     else if (cc < 0.8)  { thisLight = mix(thisLight, vec3(0.7,1.0,0.7), va*0.5); intensity *= 0.8; }
     else                 thisLight = mix(thisLight, vec3(1.0,0.95,0.85), va*0.6);
 
-    float cx = (inU-0.5)/(0.5-mH), cy = (inV-0.5)/(0.5-mV);
+    // The emitting area can be smaller than the pane (u_lightFill): a glowing
+    // rectangle inset within the glass, so the light "doesn't fill the window."
+    float paneU = (inU - mH) / max(1.0 - 2.0 * mH, 1e-3);
+    float paneV = (inV - mV) / max(1.0 - 2.0 * mV, 1e-3);
+    float fill = clamp(u_lightFill * (0.85 + 0.3 * hash(wId + 7.0)), 0.05, 1.0);
+    float inset = (1.0 - fill) * 0.5;
+    bool inLight = paneU > inset && paneU < (1.0 - inset) && paneV > inset && paneV < (1.0 - inset);
+
+    if (!inLight) {
+      // glazing around the fixture: glass plus a soft spill of the window light
+      vec3 spill = thisLight * intensity * (0.10 + 0.10 * nightAmb);
+      gl_FragColor = vec4(glass + spill, 1.0);
+      return;
+    }
+
+    // glow falloff measured within the lit rectangle
+    float cx = (paneU - 0.5) / max(0.5 - inset, 1e-3);
+    float cy = (paneV - 0.5) / max(0.5 - inset, 1e-3);
     float glow = 1.0 - 0.2 * max(abs(cx), abs(cy));
     float wb = intensity * glow * (0.3 + 0.7 * nightAmb);
     vec3 wc = thisLight * wb + v_color * sunDiff * 0.2;

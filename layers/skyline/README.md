@@ -28,9 +28,14 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
 - **Three shader programs** sharing one canvas — building bodies +
   roofs, the ground plane with the street-glow falloff, and the GL
   point-sprite aviation lights blinking on tall buildings.
-- **All `number` and `color` param kinds**, plus continuous-source
-  modulation hints exercised end-to-end through the panel (BIND /
+- **All `number`, `color`, and `boolean` param kinds**, plus continuous-
+  source modulation hints exercised end-to-end through the panel (BIND /
   AMT / MODE controls on every modulatable widget).
+- **A configurable footprint + facade mix** — `footprintVariety` plus the
+  `allowEll` / `allowCylinder` toggles vary the building silhouettes
+  (box / bevel / chop / L-shape / round tower); `facadeVariety` and
+  `lightFill` vary the window styling (standard / small-gap / curtain-wall,
+  and how much of each pane lights up).
 - **A `pulse` reaction** with three entry strategies (`bottom-up`,
   `top-down`, `point-out`) that send brightness waves through the lit
   windows. Demonstrates the harness's reaction-with-args shape and the
@@ -43,7 +48,10 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
 | Param | Behavior |
 |---|---|
 | `seed` | Range `0..99999` step `1`. The slider works but the wide range makes finding a specific value tedious — easier to bind to audio or hand-edit `config/session-state.json`. |
-| `seed`, `density`, `maxHeight` | Each triggers a full city geometry rebuild on change. Dragging these sliders feels less smooth than the others — there's a brief reflow per frame. By design: each value implies a different geometry. |
+| `seed`, `density`, `maxHeight`, `footprintVariety`, `allowEll`, `allowCylinder` | Each triggers a full city geometry rebuild on change. Dragging/toggling these feels less smooth than the others — there's a brief reflow. By design: each value implies a different geometry. |
+| `footprintVariety` | Fraction of buildings that get a non-box footprint. Bevels and chops are common; the `allowEll` / `allowCylinder` toggles gate the rare L-shapes and very-rare round towers. `0` = an all-rectangular skyline. |
+| `facadeVariety` | Live (no rebuild) — the window-facade style is chosen per building in the shader. `0` = every building has standard punched windows; raising it blends in small-gap and full-glass curtain-wall facades. |
+| `lightFill` | Live — how much of each window pane actually emits light. `1` ≈ the whole pane glows (continuous-glass look on curtain walls); lower leaves a dim glass surround with a smaller lit rectangle inside, so the light reads smaller than the window. |
 | `lightColor` | Declares `modulation: { kind: 'continuous' }` as a forward-compat hint, but the harness's audio binding only resolves to numbers — so the panel intentionally doesn't show a BIND dropdown on this widget. The color picker is the only operator-driven input. |
 
 ## File layout

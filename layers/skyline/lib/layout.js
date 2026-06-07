@@ -42,6 +42,55 @@ export function pickColor(rng) {
 }
 
 // ============================================================================
+// Footprint mix
+//
+// Relative rarities among the exotic (non-box) shapes. Bevels and chops are
+// common-ish; the L-shape is rare and the cylinder very rare — renormalized
+// over whichever shapes the operator has enabled.
+// ============================================================================
+
+const FOOTPRINT_WEIGHTS = { bevel: 0.50, chop: 0.30, ell: 0.14, cylinder: 0.06 };
+
+/**
+ * Choose a footprint descriptor for one building.
+ *
+ * @param {() => number} rng
+ * @param {{variety?:number, allowEll?:boolean, allowCylinder?:boolean}} opts
+ *   variety — probability (0..1) that a building is non-box.
+ * @returns {{type:string}} descriptor consumed by buildFootprintPolygon
+ */
+export function pickFootprint(rng, { variety = 0.35, allowEll = true, allowCylinder = true } = {}) {
+  if (rng() >= variety) return { type: 'box' };
+
+  const entries = [['bevel', FOOTPRINT_WEIGHTS.bevel], ['chop', FOOTPRINT_WEIGHTS.chop]];
+  if (allowEll) entries.push(['ell', FOOTPRINT_WEIGHTS.ell]);
+  if (allowCylinder) entries.push(['cylinder', FOOTPRINT_WEIGHTS.cylinder]);
+  let total = 0;
+  for (const [, w] of entries) total += w;
+  let r = rng() * total, type = 'bevel';
+  for (const [t, w] of entries) { if ((r -= w) <= 0) { type = t; break; } }
+
+  switch (type) {
+    case 'bevel':
+      return { type, chamfer: 0.10 + rng() * 0.13 };            // slight chamfer on all corners
+    case 'chop': {
+      const corner = Math.floor(rng() * 4);
+      const double = rng() < 0.30;
+      return {
+        type, corner, cut: 0.28 + rng() * 0.22,
+        corner2: double ? (corner + 2) % 4 : -1, cut2: 0.28 + rng() * 0.22
+      };
+    }
+    case 'ell':
+      return { type, corner: Math.floor(rng() * 4), nx: 0.40 + rng() * 0.18, nz: 0.40 + rng() * 0.18 };
+    case 'cylinder':
+      return { type, sides: 18 + Math.floor(rng() * 11) };       // 18..28-gon
+    default:
+      return { type: 'box' };
+  }
+}
+
+// ============================================================================
 // Layout generator
 // ============================================================================
 
@@ -50,13 +99,18 @@ export function pickColor(rng) {
  * wall colors, and optional taper descriptors.
  *
  * @param {() => number} rng     Seeded RNG (mulberry32)
- * @param {{density:number,maxHeight:number}} params
+ * @param {{density:number,maxHeight:number,footprintVariety?:number,allowEll?:boolean,allowCylinder?:boolean}} params
  * @returns {{buildings:Array, spacing:number, citySize:[number,number]}}
  */
 export function generateLayout(rng, params) {
   const buildings = [];
   const spacing = 2.8;
   const density = params.density;
+  const fpCfg = {
+    variety: params.footprintVariety ?? 0.35,
+    allowEll: params.allowEll ?? true,
+    allowCylinder: params.allowCylinder ?? true
+  };
   const gridW = Math.round(density * 1.6), gridD = density;
   const halfW = (gridW * spacing) / 2, halfD = (gridD * spacing) / 2;
 
@@ -93,6 +147,7 @@ export function generateLayout(rng, params) {
   function makeB(x, z, h, rot) {
     const b = {x, z, w: 0.85 + rng() * 1.3, d: 0.85 + rng() * 1.3, h, rot, col: pickColor(rng), roofRng: rng(), id: id++};
     b.taper = assignTaper(b);
+    b.footprint = pickFootprint(rng, fpCfg);
     return b;
   }
 

@@ -25,7 +25,7 @@ import City, { parseColorGL } from './lib/city.js';
 
 export const key = 'skyline';
 export const label = 'City Skyline';
-export const description = 'Procedural night-time city skyline. Hundreds of buildings of varied shapes (boxes, cylinders, stepped towers) with lit windows, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
+export const description = 'Procedural night-time city skyline. Hundreds of buildings with a configurable mix of footprints (boxes, beveled/chopped corners, rare L-shapes and round towers) and window facades (standard punched, small-gap, and full-glass curtain walls), with lit windows whose glow can fill the pane or sit inset within it, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
 export const wantsContext = 'webgl';
 
 /**
@@ -76,6 +76,26 @@ export const params = {
     step: 0.01,
     description: 'Per-window size as a fraction of the floor cell.'
   },
+  facadeVariety: {
+    type: 'number',
+    label: 'Facade variety',
+    default: 0.5,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Mix of window facades. 0 = every building has standard punched windows; higher blends in small-gap and full-glass curtain-wall facades.',
+    modulation: { kind: 'continuous' }
+  },
+  lightFill: {
+    type: 'number',
+    label: 'Light fill',
+    default: 0.8,
+    min: 0.05,
+    max: 1,
+    step: 0.01,
+    description: 'How much of each window pane actually lights up. 1 = the whole pane glows; lower leaves a glass surround with a smaller lit rectangle inside.',
+    modulation: { kind: 'continuous' }
+  },
   floorHeight: {
     type: 'number',
     label: 'Floor height',
@@ -102,6 +122,27 @@ export const params = {
     max: 40,
     step: 1,
     description: 'Tallest building height ceiling. Skyscrapers cluster toward this value.'
+  },
+  footprintVariety: {
+    type: 'number',
+    label: 'Footprint variety',
+    default: 0.35,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Fraction of buildings with a non-box footprint — beveled or chopped corners (common), with the occasional L-shape or round tower. 0 = all rectangular boxes. Regenerates the skyline.'
+  },
+  allowEll: {
+    type: 'boolean',
+    label: 'Allow ell-shaped',
+    default: true,
+    description: 'Permit rare L-shaped (notched) footprints in the exotic mix. Regenerates the skyline.'
+  },
+  allowCylinder: {
+    type: 'boolean',
+    label: 'Allow cylindrical',
+    default: true,
+    description: 'Permit very rare round-tower footprints in the exotic mix. Regenerates the skyline.'
   },
   streetGlow: {
     type: 'number',
@@ -204,9 +245,14 @@ function configFromParams(params) {
     seed: params.seed,
     lightRatio: params.lightRatio,
     windowScale: params.windowScale,
+    facadeVariety: params.facadeVariety,
+    lightFill: params.lightFill,
     floorHeight: params.floorHeight,
     density: params.density,
     maxHeight: params.maxHeight,
+    footprintVariety: params.footprintVariety,
+    allowEll: params.allowEll,
+    allowCylinder: params.allowCylinder,
     streetGlow: params.streetGlow,
     colorVariance: params.colorVariance,
     sunIntensity: params.sunIntensity,

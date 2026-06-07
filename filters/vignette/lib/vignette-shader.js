@@ -8,7 +8,10 @@
  *
  * The glass region also supports lens distortion (barrel/pincushion),
  * controlled by a single strength parameter: positive = fisheye/convex
- * magnification, negative = pincushion/concave, zero = off.
+ * magnification, negative = pincushion/concave, zero = off. The warp is
+ * saturating (bounded near the rim) and samples that fall outside the
+ * scene — under strong lens or zoom < 1 — dissolve into the frame region
+ * instead of smearing the texture border into radial streaks.
  *
  * Blur uses a 13-tap Poisson disc approximation — not a true Gaussian, but
  * cheap (single pass, no extra FBOs) and convincing for artistic use.
@@ -112,21 +115,34 @@ export const VIGNETTE_FRAG = `
   // Barrel/pincushion distortion within the glass ellipse.
   // Operates in ellipse-normalized space so the warp respects the
   // vignette shape rather than assuming a circular viewport.
+  //
+  // The warp is *saturating*: the previous profile (1 + strength*r^power)
+  // grew without bound near the rim, so strong lens / high lensPower
+  // values blew up the edge and read as broken. Here the radial gain is
+  // passed through k / (1 + |k|), which tends to ±1 as |k| grows, so the
+  // warp factor is bounded in [0, 2] no matter how hard the params are
+  // pushed (or modulated). The whole declared range stays usable.
+  //
+  // The returned UV is deliberately NOT clamped — the caller detects when
+  // it leaves [0,1] and fades gracefully instead of smearing a border
+  // texel into radial streaks.
   vec2 applyLensDistortion(vec2 uv, float strength, float power) {
     vec2 center = vec2(0.5);
     vec2 offset = uv - center;
     // Normalize into ellipse space so r=1 at the ellipse boundary
     vec2 ellipseNorm = offset / vec2(max(u_sizeX, 0.001), max(u_sizeY, 0.001));
-    float r = length(ellipseNorm);
-    // Variable exponent: 2.0 = standard quadratic barrel/pincushion
-    // Lower = more uniform warp, higher = concentrated at edges
-    float rPow = pow(max(r, 0.0001), power);
-    // Barrel (strength > 0): pixels push outward → magnify center
-    // Pincushion (strength < 0): pixels pull inward → shrink center
-    float warp = 1.0 + strength * rPow;
-    vec2 distorted = center + offset * warp;
-    // Clamp to valid texture range to avoid sampling outside the scene
-    return clamp(distorted, 0.0, 1.0);
+    // Inside the glass r <= ~1; beyond that the pixel is frame and is
+    // masked out, so clamping the shaping term keeps it well-behaved.
+    float r = clamp(length(ellipseNorm), 0.0, 1.0);
+    // Variable exponent shapes where the bend concentrates:
+    // low power = near-uniform warp, high power = flat center / sharp rim.
+    float rPow = pow(r, max(power, 0.1));
+    // Saturating radial gain. strength > 0 pushes the sample outward
+    // (content compresses toward center), strength < 0 pulls inward —
+    // same sign convention as before, but bounded.
+    float k = strength * rPow;
+    float warp = 1.0 + k / (1.0 + abs(k));
+    return center + offset * warp;
   }
 
   // --- Blur: 13-tap Poisson disc ---
@@ -178,6 +194,12 @@ export const VIGNETTE_FRAG = `
     }
 
     // --- Glass scene sample (lens-distorted UV, then zoomed, optionally blurred) ---
+    // glassUV is kept UNCLAMPED through lens + zoom so we can tell when a
+    // sample lands outside the scene. There is no content beyond [0,1] (the
+    // texture only holds what was rendered inside the canvas), so a hard
+    // clamp would pin whole rows/columns to the border texel — the radial
+    // streaks seen at zoom < 1 or strong lens. Instead we measure the escape
+    // and dissolve the glass into the frame region over a soft band.
     vec2 glassUV = v_uv;
     if (abs(u_glassLens) > 0.001) {
       glassUV = applyLensDistortion(v_uv, u_glassLens, u_glassLensPower);
@@ -185,13 +207,24 @@ export const VIGNETTE_FRAG = `
     // Zoom: scale UV around center after lens distortion
     // >1 magnifies (zooms in), <1 shrinks (zooms out)
     if (abs(u_glassZoom - 1.0) > 0.001) {
-      glassUV = clamp(0.5 + (glassUV - 0.5) / u_glassZoom, 0.0, 1.0);
+      glassUV = 0.5 + (glassUV - 0.5) / u_glassZoom;
     }
+
+    // How far did the sample escape [0,1]? 0 inside, grows past the edge.
+    vec2 oob2 = max(-glassUV, glassUV - 1.0);
+    float oob = max(max(oob2.x, oob2.y), 0.0);
+    // Soft dissolve over ~6% of UV space — glass fades to frame instead of
+    // smearing. Keeps the lens rim graceful across the whole zoom/lens range.
+    float glassEscape = smoothstep(0.0, 0.06, oob);
+
+    // Sample at a valid (clamped) coord; the escape fade hides any residual
+    // border value by blending toward the in-bounds frame result below.
+    vec2 glassSampleUV = clamp(glassUV, 0.0, 1.0);
     vec3 glassScene;
     if (u_glassBlur > 0.5) {
-      glassScene = sampleBlurred(glassUV, u_glassBlur);
+      glassScene = sampleBlurred(glassSampleUV, u_glassBlur);
     } else {
-      glassScene = texture2D(u_scene, glassUV).rgb;
+      glassScene = texture2D(u_scene, glassSampleUV).rgb;
     }
 
     // Apply filters to scene color for each region
@@ -202,8 +235,13 @@ export const VIGNETTE_FRAG = `
     vec3 glassTinted = mix(glassFiltered, u_glassColor.rgb, u_glassColor.a);
     vec3 frameTinted = mix(frameFiltered, u_frameColor.rgb, u_frameColor.a);
 
-    // Blend glass and frame using the mask
-    vec3 result = mix(glassTinted, frameTinted, mask);
+    // Where the lens sample escaped the scene, dissolve glass → frame so the
+    // out-of-bounds region inherits the frame treatment (vignette darkening
+    // by default) rather than streaking.
+    vec3 glassRegion = mix(glassTinted, frameTinted, glassEscape);
+
+    // Blend glass and frame using the elliptical mask
+    vec3 result = mix(glassRegion, frameTinted, mask);
 
     gl_FragColor = vec4(result, 1.0);
   }

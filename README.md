@@ -7,11 +7,22 @@ This repo is a **bundle** — a tree of layer directories that any
 visualization-harness install can pull in with one command:
 
 ```bash
-visual-bundle install github:rdgco/visualization-bundle-examples#v0.1.0
+visual-bundle install github:rdgco/visualization-bundle-examples#v0.6.0
 ```
 
 After install, every layer here becomes loadable in the harness via
 `layer load <key>`.
+
+## Compatibility
+
+This bundle is validated — in CI and via the local
+`node .github/scripts/validate-bundle.mjs` check — against the
+**`visualization-layer-core` contract at `v0.4.0`** (the exact pin
+lives in [`.github/package.json`](.github/package.json)). Consumers
+installing this bundle should be on layer-core **`v0.4.0` or later**.
+
+Pin a specific bundle tag (e.g. `#v0.6.0`) rather than a branch for
+reproducible installs.
 
 ## What's in this bundle
 

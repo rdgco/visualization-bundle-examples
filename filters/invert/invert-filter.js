@@ -22,6 +22,16 @@ export const description =
   'smoke filter; useful for verifying readback-style pipelines (vs ' +
   'color-tint\'s blit-only path).';
 
+// Cross-host audio-modulation marker. The harness reads `kind: 'audio'` (a
+// bare `modulation: true` is silently inert in its audio UI); midi-daddy reads
+// `sourceTypes` + `defaultAmount`; lfo/random let the platform's generators
+// drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
+
 export const params = {
   strength: {
     type: 'number',
@@ -31,7 +41,7 @@ export const params = {
     max: 1,
     step: 0.01,
     description: 'Mix between source (0) and fully-inverted (1).',
-    modulation: true
+    modulation: audioMod(0.5)
   }
 };
 

@@ -576,7 +576,10 @@ export default class FeedbackFilter {
       persistence: Math.pow(persistence, dtScale),
       sourceGain: this._sourceGain,
       blend: this._blend,
-      zoom: 1 + (zoomBase - 1) * dtScale,
+      // Clamp the time-scaled zoom positive: a low `feedbackZoom` (the
+      // internal floor is 0.5) plus a long-stall frame (dtScale up to ~6)
+      // could otherwise drive this <= 0, and the shader divides by it.
+      zoom: clamp(1 + (zoomBase - 1) * dtScale, 0.5, 2),
       rotate: this._rotateRadPerSec * this._spinSign * dt,
       shiftX: this._shiftXPerFrame * dtScale,
       shiftY: this._shiftYPerFrame * dtScale,

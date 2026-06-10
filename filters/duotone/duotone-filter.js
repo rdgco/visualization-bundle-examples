@@ -16,7 +16,8 @@
  * (tracked by `lutKey`); `offset`/`contrast`/`mix` are applied at sample
  * time, so dragging them never rebuilds the table. The expensive part is
  * the full-res `getImageData` + per-pixel loop — a cheap point-op (no
- * neighbourhood), but still per-pixel JS, so it scales with canvas area.
+ * neighbourhood), but still per-pixel JS at FULL resolution, so it scales
+ * with canvas area (the heaviest CPU filter alongside frame-diff).
  *
  * The pure math (luminance, hex parsing, LUT build, index mapping, config
  * normalization) lives in `lib/gradient-lut.js` and is unit-tested; this
@@ -45,6 +46,15 @@ export const description =
   'highlights through a 2- or 3-stop colour gradient. Recolours any layer ' +
   'into a brand palette; bind the gradient offset to audio to scroll the ' +
   'palette through the image on the beat.';
+
+// Cross-host audio-modulation marker. Harness reads `kind: 'audio'`; midi-daddy
+// reads `sourceTypes` + `defaultAmount`; lfo/random let the platform's
+// generators drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
 
 export const params = {
   colorLow: {
@@ -79,7 +89,7 @@ export const params = {
     description:
       'Shifts the luminance → palette mapping. ±1 sweeps the whole image to ' +
       'one end of the gradient; bind to bass to scroll the palette on the beat.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.4)
   },
   contrast: {
     type: 'number',
@@ -89,7 +99,7 @@ export const params = {
     description:
       'Stretches luminance around mid-grey before the map. 1 = unchanged; ' +
       'higher pushes shadows/highlights apart for a punchier split.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.5)
   },
   mix: {
     type: 'number',
@@ -97,7 +107,7 @@ export const params = {
     default: DEFAULT_CONFIG.mix,
     min: 0, max: 1, step: 0.01,
     description: 'Blend of the duotone over the original. 1 = full duotone, 0 = untouched source.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.3)
   }
 };
 
@@ -108,8 +118,15 @@ export default class DuotoneFilter {
     this._config = normalizeConfig(initialParams, DEFAULT_CONFIG);
 
     // Full-res work canvas for source readback; resized lazily in render().
-    this._work = document.createElement('canvas');
-    this._wctx = this._work.getContext('2d', { willReadFrequently: true });
+    // Guarded so the filter constructs headless (degrades to a passthrough)
+    // like every other filter in the bundle.
+    this._supported = typeof document !== 'undefined' && typeof document.createElement === 'function';
+    this._work = null;
+    this._wctx = null;
+    if (this._supported) {
+      this._work = document.createElement('canvas');
+      this._wctx = this._work.getContext('2d', { willReadFrequently: true });
+    }
     this._ww = 0;
     this._wh = 0;
 
@@ -133,6 +150,8 @@ export default class DuotoneFilter {
   setConfig(p) { this._applyParams(p); }
   setModulatedValues(p) { this._applyParams(p); }
 
+  isActive() { return this._supported; }
+
   resize(width, height) {
     this._w = Math.max(1, width | 0);
     this._h = Math.max(1, height | 0);
@@ -140,11 +159,15 @@ export default class DuotoneFilter {
 
   cleanup() {
     this._lut = null;
-    this._work.width = this._work.height = 0;
+    if (this._work) this._work.width = this._work.height = 0;
   }
 
   // ── Contract: render ───────────────────────────────────────────────
   render(sourceCanvas, ctx) {
+    if (!this._supported) {
+      if (ctx && typeof ctx.drawImage === 'function') ctx.drawImage(sourceCanvas, 0, 0, this._w, this._h);
+      return;
+    }
     const { _w: w, _h: h } = this;
     const cfg = this._config;
 

@@ -22,13 +22,23 @@ export const description =
   'Overlays a configurable tinted rectangle over the source canvas. ' +
   'Pure-Canvas2D smoke filter — useful for verifying the harness pipeline end-to-end.';
 
+// Cross-host audio-modulation marker. The harness reads `kind: 'audio'` (a
+// bare `modulation: true` is silently inert in its audio UI); midi-daddy reads
+// `sourceTypes` + `defaultAmount`; lfo/random let the platform's generators
+// drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
+
 export const params = {
   color: {
     type: 'color',
     label: 'Tint color',
     default: '#ff0000',
     description: 'Color of the overlay tint.',
-    modulation: true
+    modulation: audioMod(0.3)
   },
   alpha: {
     type: 'number',
@@ -38,7 +48,7 @@ export const params = {
     max: 1,
     step: 0.01,
     description: 'Opacity of the tint overlay. 0 = source unchanged; 1 = solid color.',
-    modulation: true
+    modulation: audioMod(0.4)
   }
 };
 

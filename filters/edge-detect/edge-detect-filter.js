@@ -56,6 +56,15 @@ export const description =
   'fixed tint or the underlying image, and add a glow around them. ' +
   'Runs at a tunable resolution so it keeps up with video.';
 
+// Cross-host audio-modulation marker. Harness reads `kind: 'audio'`; midi-daddy
+// reads `sourceTypes` + `defaultAmount`; lfo/random let the platform's
+// generators drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
+
 export const params = {
   backgroundOpacity: {
     type: 'number',
@@ -66,7 +75,7 @@ export const params = {
       'How much of the original image shows behind the edges. 0 = edges ' +
       'only (on the backdrop colour); 1 = edges over the full source; ' +
       'in between crossfades the two.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.3)
   },
   threshold: {
     type: 'number',
@@ -76,7 +85,7 @@ export const params = {
     description:
       'Edge sensitivity floor. Raise to drop faint texture/noise and ' +
       'keep only the strong outlines; lower to catch fine detail.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.1)
   },
   gain: {
     type: 'number',
@@ -84,7 +93,7 @@ export const params = {
     default: DEFAULT_CONFIG.gain,
     min: 0, max: 8, step: 0.05,
     description: 'Brightness/opacity of the detected edges. Push faint edges to full strength.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(2)
   },
   colorMode: {
     type: 'enum',
@@ -113,7 +122,7 @@ export const params = {
     default: DEFAULT_CONFIG.glow,
     min: 0, max: 1, step: 0.01,
     description: 'Strength of the additive bloom around the edges. 0 = crisp lines only.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.3)
   },
   glowSize: {
     type: 'number',
@@ -121,7 +130,7 @@ export const params = {
     default: DEFAULT_CONFIG.glowSize,
     min: 0, max: 40, step: 1,
     description: 'How far the glow spreads, in pixels. Larger = softer halo.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(8)
   },
   detail: {
     type: 'number',
@@ -131,7 +140,7 @@ export const params = {
     description:
       'Resolution the edge pass runs at, as a fraction of the canvas. ' +
       'Lower = faster (good for live video), higher = finer edges.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.2)
   }
 };
 
@@ -175,10 +184,16 @@ export default class EdgeDetectFilter {
     // Offscreen work canvas (downscaled source readback) + edge canvas
     // (the built edge map, same downscaled size). Both are re-sized lazily
     // in render() when the working dimensions change.
-    this._work = document.createElement('canvas');
-    this._wctx = this._work.getContext('2d', { willReadFrequently: true });
-    this._edge = document.createElement('canvas');
-    this._ectx = this._edge.getContext('2d');
+    // Guarded so the filter constructs headless (degrades to a passthrough)
+    // like every other filter in the bundle.
+    this._supported = typeof document !== 'undefined' && typeof document.createElement === 'function';
+    this._work = this._wctx = this._edge = this._ectx = null;
+    if (this._supported) {
+      this._work = document.createElement('canvas');
+      this._wctx = this._work.getContext('2d', { willReadFrequently: true });
+      this._edge = document.createElement('canvas');
+      this._ectx = this._edge.getContext('2d');
+    }
     this._sw = 0;
     this._sh = 0;
 
@@ -200,6 +215,8 @@ export default class EdgeDetectFilter {
   setConfig(p) { this._applyParams(p); }
   setModulatedValues(p) { this._applyParams(p); }
 
+  isActive() { return this._supported; }
+
   resize(width, height) {
     this._w = Math.max(1, width | 0);
     this._h = Math.max(1, height | 0);
@@ -208,8 +225,8 @@ export default class EdgeDetectFilter {
   cleanup() {
     this._lum = null;
     // Drop the offscreen canvas backing stores.
-    this._work.width = this._work.height = 0;
-    this._edge.width = this._edge.height = 0;
+    if (this._work) this._work.width = this._work.height = 0;
+    if (this._edge) this._edge.width = this._edge.height = 0;
   }
 
   // ── Contract: reaction ─────────────────────────────────────────────
@@ -226,6 +243,10 @@ export default class EdgeDetectFilter {
 
   // ── Contract: render ───────────────────────────────────────────────
   render(sourceCanvas, ctx) {
+    if (!this._supported) {
+      if (ctx && typeof ctx.drawImage === 'function') ctx.drawImage(sourceCanvas, 0, 0, this._w, this._h);
+      return;
+    }
     const { _w: w, _h: h } = this;
     const cfg = this._config;
 

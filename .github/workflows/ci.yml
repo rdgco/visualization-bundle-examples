@@ -52,6 +52,20 @@ jobs:
         working-directory: .github
         run: npm install --no-package-lock
 
-      - name: Validate every layer
+      - name: Validate every layer + filter
         working-directory: .github
         run: node scripts/validate-bundle.mjs
+
+      # Run the colocated standalone filter tests (plain node, no framework).
+      # They cover the GL/DOM-independent logic — param clamping, reaction
+      # envelopes, the no-DOM passthrough, audio markers. Without this step a
+      # logic regression ships green, since the validator only checks the
+      # contract shape, not behaviour.
+      - name: Run filter unit tests
+        run: |
+          fail=0
+          for t in filters/*/*-filter.test.js; do
+            echo "→ $t"
+            node "$t" || fail=1
+          done
+          exit $fail

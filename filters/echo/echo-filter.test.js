@@ -51,14 +51,18 @@ test('render is a safe passthrough when no DOM ring is available', () => {
 });
 
 // ── param clamping ─────────────────────────────────────────────────────────
-test('params clamp into range, round taps, ignore garbage', () => {
+test('params clamp into range, round echoCount, ignore garbage', () => {
   const f = new EchoFilter(10, 10);
-  f.updateParams({ delay: 9999, taps: 2.6, echoLevel: 5, falloff: -1, detail: 9 });
+  f.updateParams({ delay: 9999, echoCount: 99, echoLevel: 5, falloff: -1, spread: 5, echoScale: 0.1, detail: 9 });
   assert.strictEqual(f._delay, 500, 'delay capped at 500');
-  assert.strictEqual(f._taps, 3, 'taps rounded + clamped');
+  assert.strictEqual(f._echoCount, 8, 'echoCount capped at 8');
   assert.strictEqual(f._echoLevel, 1, 'echoLevel capped');
   assert.strictEqual(f._falloff, 0, 'falloff floored');
+  assert.strictEqual(f._spread, 1, 'spread capped');
+  assert.strictEqual(f._echoScale, 0.6, 'echoScale floored at 0.6');
   assert.strictEqual(f._detail, 1, 'detail capped');
+  f.updateParams({ echoCount: 2.6 });
+  assert.strictEqual(f._echoCount, 3, 'echoCount rounds to nearest');
   f.updateParams({ delay: 'oops', blend: 'add' });
   assert.strictEqual(f._delay, 500, 'non-number ignored');
   assert.strictEqual(f._op, blendToOp('add'), 'blend enum applied');
@@ -83,13 +87,29 @@ test('clear is a no-throw state reset; unknown reaction throws', () => {
 // ── audio binding markers ──────────────────────────────────────────────────
 test('continuous attributes are audio-bindable; structural ones are not', async () => {
   const mod = await import('./echo-filter.js');
-  const audioBound = ['delay', 'echoLevel', 'falloff', 'offsetX', 'offsetY', 'hueStep'];
+  const audioBound = ['delay', 'echoLevel', 'falloff', 'spread', 'spreadAngle', 'echoScale', 'hueStep'];
   for (const name of audioBound) {
     assert.strictEqual(mod.params[name].modulation?.kind, 'audio', `${name} should be audio-bindable`);
   }
-  // taps + detail reallocate / are integer-structural -> deliberately static.
-  assert.strictEqual(mod.params.taps.modulation, undefined, 'taps not modulatable');
+  // echoCount + detail are integer-structural / reallocate -> deliberately static.
+  assert.strictEqual(mod.params.echoCount.modulation, undefined, 'echoCount not modulatable');
   assert.strictEqual(mod.params.detail.modulation, undefined, 'detail not modulatable');
+});
+
+test('every param belongs to a contiguous paramGroup (no split sections)', async () => {
+  const mod = await import('./echo-filter.js');
+  // The harness renders one panel per contiguous run of a paramGroup. A group
+  // that appears in two non-adjacent runs draws as two panels (the bug this
+  // locks down) — and every param must carry a group so none floats loose.
+  const seq = Object.values(mod.params).map(s => s.paramGroup);
+  assert.ok(seq.every(Boolean), 'every param has a paramGroup');
+  const seen = new Set();
+  let prev = null;
+  for (const g of seq) {
+    if (g !== prev && seen.has(g)) assert.fail(`paramGroup '${g}' is split into non-adjacent runs`);
+    seen.add(g);
+    prev = g;
+  }
 });
 
 // ── lifecycle no-throws ────────────────────────────────────────────────────

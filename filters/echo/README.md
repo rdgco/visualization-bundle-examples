@@ -43,18 +43,26 @@ deepest tap (`taps_max · delay_max` = 2000 ms).
 
 | Param | Range | What it does |
 |---|---|---|
-| `delay` | 10–500 ms | Time between taps. ~120–250 ms reads as a tight rhythmic echo; bind to tempo for beat-locked repeats. *audio-bindable* |
-| `taps` | 1–4 | How many ghosts. Tap k shows the frame from `delay·k` ago. Structural — not modulated. |
-| `echoLevel` | 0–1 | Opacity of the first echo. 0 = passthrough; later taps fall off by `falloff`. *audio-bindable* |
-| `falloff` | 0–1 | Opacity ratio between successive taps. Low = one clear echo; high = a long even train. *audio-bindable* |
-| `offsetX` / `offsetY` | ±0.1 | Per-tap drift (fraction of W/H) — ghosts march cumulatively across the frame. *audio-bindable* |
-| `hueStep` | -180–180 ° | Hue rotation added per tap — a rainbow echo trail. *audio-bindable* |
-| `blend` | screen / add / over | How echoes composite. screen = glowing/clamped (default); add = additive; over = opaque ghosts under the source. |
+| `delay` | 10–500 ms | Time between echoes. ~120–250 ms reads as a tight rhythmic echo; bind to tempo for beat-locked repeats. *audio-bindable* |
+| `echoCount` | 1–8 | How many ghosts. Echo k shows the frame from `delay·k` ago. Crank it with `spread` for a canyon. Structural — not modulated. |
+| `echoLevel` | 0–1 | Opacity of the first echo. 0 = passthrough; later echoes fall off by `falloff`. *audio-bindable* |
+| `falloff` | 0–1 | Opacity ratio between successive echoes. Low = one clear echo; high = a long even train. *audio-bindable* |
+| `spread` | 0–1 | How far the echoes fan out across the screen. 0 = stacked in place (slapback); 1 = furthest echo reaches the frame edge (canyon fills the screen). *audio-bindable* |
+| `spreadAngle` | 0–360 ° | Direction the echoes fan (0 = right, 90 = down) — the axis of the canyon. *audio-bindable* |
+| `echoScale` | 0.6–1 | Per-echo size multiplier. 1 = full size; <1 shrinks each successive echo so they recede into the distance (canyon perspective). *audio-bindable* |
+| `hueStep` | -180–180 ° | Hue rotation added per echo — a rainbow echo trail. *audio-bindable* |
+| `blend` | screen / add / over | How echoes composite. screen = glowing/clamped (default); add = additive (diverges from screen in bright/overlapping regions); over = opaque ghosts under the source. |
 | `detail` | 0.25–1 | Resolution the ring stores frames at. The **memory lever** — see below. Structural — not modulated. |
 
-`taps` and `detail` are deliberately **not** audio-bindable: `taps` is an
-integer count and `detail` reallocates the ring, so neither wants per-frame
-modulation.
+`echoCount` and `detail` are deliberately **not** audio-bindable: `echoCount`
+is an integer count and `detail` reallocates the ring, so neither wants
+per-frame modulation.
+
+> **Reading the controls:** stacked echoes (`spread` 0) over a dark, slowly
+> moving source make `falloff` and the `blend` modes hard to tell apart —
+> the ghosts pile on the same pixels. Turn `spread` up so each echo lands in
+> its own spot and both become obvious: `falloff` is the brightness fade down
+> the canyon, and `add` vs `screen` shows where ghosts overlap.
 
 ## Audio
 
@@ -67,7 +75,8 @@ map on the patch, the visual stays audio-blind). Harness reads
 
 Good starting bindings: **peak → `echoLevel`** (ghosts swell with energy),
 **high → `hueStep`** (rainbow trail shimmers on hats), **tempo → `delay`**
-(beat-locked repeats).
+(beat-locked repeats), **bass → `spread`** (the canyon breathes open on the
+low end).
 
 ## Reactions
 
@@ -91,17 +100,19 @@ Stack `echo` as a filter **above** moving content — same two test layers as
 
 - **`vibrations`** — the audio-reactive rings make each delayed tap legible;
   bind `peak → echoLevel` for ghosts that swell with the track.
-- **`skyline`** — the moving camera leaves a rhythmic ghost train; add
-  `offsetX` for echoes that march across the skyline.
+- **`skyline`** — the moving camera leaves a rhythmic ghost train; raise
+  `spread` for echoes that fan across the skyline.
 
 ## Looks to try
 
-- **Tight slapback:** `delay` ~120 ms, `taps` 2, `falloff` ~0.4 — one crisp
-  ghost, like a tape slap.
-- **Ghost train:** `delay` ~200 ms, `taps` 4, `falloff` ~0.7, `offsetX` ~0.03
-  — four marching echoes.
-- **Rainbow trail:** add `hueStep` ~40°, `blend` screen — each ghost a
-  different colour.
+- **Tight slapback:** `delay` ~120 ms, `echoCount` 2, `falloff` ~0.4,
+  `spread` 0 — one crisp ghost, like a tape slap.
+- **Canyon:** `echoCount` 8, `spread` ~0.8, `echoScale` ~0.9, `falloff` ~0.8 —
+  a wall of receding echoes filling the screen. Spin `spreadAngle` to aim it.
+- **Ghost train:** `delay` ~200 ms, `echoCount` 4, `falloff` ~0.7, `spread`
+  ~0.4 — four echoes marching off to one side.
+- **Rainbow canyon:** the Canyon preset plus `hueStep` ~30°, `blend` screen —
+  each receding echo a different colour.
 - **Beat snap:** bind `burst` to a kick (echo blooms) and `clear` to the
   downbeat (tail wipes clean).
 

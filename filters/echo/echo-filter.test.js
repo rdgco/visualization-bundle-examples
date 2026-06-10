@@ -72,12 +72,15 @@ test('render is a safe passthrough when no DOM ring is available', () => {
 // ── param clamping ─────────────────────────────────────────────────────────
 test('delay-pedal params clamp + round; key params parse', () => {
   const f = new EchoFilter(10, 10);
-  f.updateParams({ time: 9999, repeats: 99, level: 5, feedback: -1, direction: 'reverse' });
-  assert.strictEqual(f._time, 500, 'time capped at 500');
-  assert.strictEqual(f._repeats, 8, 'repeats capped at 8');
+  f.updateParams({ time: 9999, repeats: 99, level: 5, feedback: -1, direction: 'reverse', echoScale: 9, spread: 9, echoBlur: 999 });
+  assert.strictEqual(f._time, 1000, 'time capped at 1000');
+  assert.strictEqual(f._repeats, 12, 'repeats capped at 12');
   assert.strictEqual(f._level, 1, 'level capped');
   assert.strictEqual(f._feedback, 0, 'feedback floored');
   assert.strictEqual(f._direction, 'reverse', 'direction enum applied');
+  assert.strictEqual(f._echoScale, 1.5, 'echoScale capped at 1.5 (grow)');
+  assert.strictEqual(f._spread, 1.5, 'spread capped at 1.5');
+  assert.strictEqual(f._echoBlur, 30, 'echoBlur capped at 30');
   f.updateParams({ repeats: 2.6 });
   assert.strictEqual(f._repeats, 3, 'repeats rounds to nearest');
 
@@ -88,9 +91,36 @@ test('delay-pedal params clamp + round; key params parse', () => {
   assert.strictEqual(f._keyInvert, true, 'keyInvert applied');
 
   f.updateParams({ time: 'oops', blend: 'add', key: 'bogus' });
-  assert.strictEqual(f._time, 500, 'non-number ignored');
+  assert.strictEqual(f._time, 1000, 'non-number ignored');
   assert.strictEqual(f._op, blendToOp('add'), 'blend enum applied');
   assert.strictEqual(f._key, 'color', 'invalid key enum ignored');
+});
+
+// ── tap age (forward / reverse delay) ──────────────────────────────────────
+test('forward tap age is fixed time·k; reverse sweeps the window', () => {
+  const f = new EchoFilter(10, 10);
+  f.updateParams({ time: 200, direction: 'forward' });
+  assert.strictEqual(f._tapAge(1, 12345), 200, 'forward tap1 = time');
+  assert.strictEqual(f._tapAge(3, 999), 600, 'forward tap3 = 3·time, now-independent');
+
+  f.updateParams({ direction: 'reverse' });
+  // now % 200 == 0 -> phase 0 -> ages at the window starts
+  assert.strictEqual(f._tapAge(1, 1000), 0, 'reverse tap1 at phase 0');
+  assert.strictEqual(f._tapAge(2, 1000), 200, 'reverse tap2 at phase 0');
+  // now % 200 == 100 -> phase 0.5 -> swept halfway into each window
+  assert.strictEqual(f._tapAge(1, 1100), 100, 'reverse tap1 at phase 0.5');
+  assert.strictEqual(f._tapAge(2, 1100), 300, 'reverse tap2 at phase 0.5');
+});
+
+// ── tone filter string ─────────────────────────────────────────────────────
+test('tap filter builds a cumulative ctx.filter only from active knobs', () => {
+  const f = new EchoFilter(10, 10);
+  assert.strictEqual(f._tapFilter(3), '', 'no tone -> empty (skips ctx.filter)');
+  f.updateParams({ echoBlur: 2, hueStep: 30 });
+  const s = f._tapFilter(3);
+  assert.ok(s.includes('blur(6.00px)'), 'blur is cumulative (echoBlur·k)');
+  assert.ok(s.includes('hue-rotate(90deg)'), 'hue is cumulative (hueStep·k)');
+  assert.ok(!s.includes('saturate'), 'inactive knobs omitted');
 });
 
 // ── reactions ──────────────────────────────────────────────────────────────

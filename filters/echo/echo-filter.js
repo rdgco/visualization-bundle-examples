@@ -62,7 +62,12 @@ const KEY_MODES = ['off', 'luma', 'color'];
 // `defaultAmount`; layer-core treats the object as opaque.
 const audioMod = defaultAmount => ({
   kind: 'audio',
-  sourceTypes: ['audio', 'oneshot', 'note', 'tempo'],
+  // Include lfo + random so the platform's LFO and random-generator sources
+  // can drive any attribute — e.g. an LFO or random source on `spreadAngle`
+  // gives an auto-rotating / randomised canyon. Harness ignores sourceTypes
+  // (it keys off `kind: 'audio'`); midi-daddy reads them to populate the
+  // binding source list.
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
   defaultAmount
 });
 
@@ -73,7 +78,7 @@ export const params = {
     label: 'Time',
     default: 200,
     min: 10,
-    max: 500,
+    max: 1000,
     step: 1,
     description:
       'Delay time between repeats, in milliseconds (the pedal "Time" knob). ' +
@@ -89,7 +94,7 @@ export const params = {
     label: 'Repeats',
     default: 3,
     min: 1,
-    max: 8,
+    max: 12,
     step: 1,
     description:
       'How many echo repeats (taps). Each repeat k shows the frame from ' +
@@ -144,7 +149,7 @@ export const params = {
     label: 'Spread',
     default: 0,
     min: 0,
-    max: 1,
+    max: 1.5,
     step: 0.01,
     description:
       'How far the echoes fan out across the screen. 0 = all repeats stack in ' +
@@ -164,7 +169,8 @@ export const params = {
     step: 1,
     description:
       'Direction the echoes fan out, in degrees (0 = right, 90 = down). Sets ' +
-      'the axis of the canyon.',
+      'the axis of the canyon. Bind an LFO source to sweep it (rotating ' +
+      'canyon) or a random source for a randomised angle each trigger.',
     modulation: audioMod(60),
     paramGroup: 'spread'
   },
@@ -172,13 +178,14 @@ export const params = {
     type: 'number',
     label: 'Echo Scale',
     default: 1,
-    min: 0.6,
-    max: 1,
+    min: 0.3,
+    max: 1.5,
     step: 0.005,
     description:
-      'Per-repeat size multiplier. 1 = every repeat full size; <1 shrinks ' +
-      'each successive repeat so they recede into the distance — the canyon ' +
-      'perspective. Pairs with `spread`.',
+      'Per-repeat size multiplier (compounds: repeat k is `echoScale^k`). ' +
+      '1 = full size; <1 shrinks each repeat so they recede into the distance ' +
+      '(canyon perspective); >1 GROWS each repeat into a screen-filling bloom ' +
+      '— compounding makes even 1.2 blow up fast. Pairs with `spread`.',
     modulation: audioMod(0.1),
     paramGroup: 'spread'
   },
@@ -189,7 +196,7 @@ export const params = {
     label: 'Blur / repeat',
     default: 0,
     min: 0,
-    max: 10,
+    max: 30,
     step: 0.1,
     description:
       'Blur added per repeat, in pixels (cumulative: repeat k is blurred ' +
@@ -477,15 +484,15 @@ export default class EchoFilter {
 
   _applyParams(p) {
     if (!p) return;
-    if (typeof p.time === 'number' && Number.isFinite(p.time)) this._time = clamp(p.time, 10, 500);
-    if (typeof p.repeats === 'number' && Number.isFinite(p.repeats)) this._repeats = clamp(Math.round(p.repeats), 1, 8);
+    if (typeof p.time === 'number' && Number.isFinite(p.time)) this._time = clamp(p.time, 10, 1000);
+    if (typeof p.repeats === 'number' && Number.isFinite(p.repeats)) this._repeats = clamp(Math.round(p.repeats), 1, 12);
     if (typeof p.level === 'number' && Number.isFinite(p.level)) this._level = clamp(p.level, 0, 1);
     if (typeof p.feedback === 'number' && Number.isFinite(p.feedback)) this._feedback = clamp(p.feedback, 0, 1);
     if (typeof p.direction === 'string' && DIRECTIONS.includes(p.direction)) this._direction = p.direction;
-    if (typeof p.spread === 'number' && Number.isFinite(p.spread)) this._spread = clamp(p.spread, 0, 1);
+    if (typeof p.spread === 'number' && Number.isFinite(p.spread)) this._spread = clamp(p.spread, 0, 1.5);
     if (typeof p.spreadAngle === 'number' && Number.isFinite(p.spreadAngle)) this._spreadAngle = clamp(p.spreadAngle, 0, 360);
-    if (typeof p.echoScale === 'number' && Number.isFinite(p.echoScale)) this._echoScale = clamp(p.echoScale, 0.6, 1);
-    if (typeof p.echoBlur === 'number' && Number.isFinite(p.echoBlur)) this._echoBlur = clamp(p.echoBlur, 0, 10);
+    if (typeof p.echoScale === 'number' && Number.isFinite(p.echoScale)) this._echoScale = clamp(p.echoScale, 0.3, 1.5);
+    if (typeof p.echoBlur === 'number' && Number.isFinite(p.echoBlur)) this._echoBlur = clamp(p.echoBlur, 0, 30);
     if (typeof p.echoDesat === 'number' && Number.isFinite(p.echoDesat)) this._echoDesat = clamp(p.echoDesat, 0, 1);
     if (typeof p.echoDim === 'number' && Number.isFinite(p.echoDim)) this._echoDim = clamp(p.echoDim, 0, 1);
     if (typeof p.hueStep === 'number' && Number.isFinite(p.hueStep)) this._hueStep = clamp(p.hueStep, -180, 180);

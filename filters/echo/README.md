@@ -47,8 +47,8 @@ is bounded (~2 s); `detail` trades stored-frame sharpness for memory.
 
 | Param | Range | What it does |
 |---|---|---|
-| `time` | 10–500 ms | Delay time between repeats. ~120–250 ms = tight rhythmic echo; bind to tempo for beat-locked repeats. *audio-bindable* |
-| `repeats` | 1–8 | How many repeats (taps). Repeat k shows the frame from `time·k` ago. Structural — not modulated. |
+| `time` | 10–1000 ms | Delay time between repeats. ~120–250 ms = tight rhythmic echo; bind to tempo for beat-locked repeats. (Beyond ~2 s of total delay the deepest repeats share the oldest frame.) *audio-bindable* |
+| `repeats` | 1–12 | How many repeats (taps). Repeat k shows the frame from `time·k` ago. Structural — not modulated. |
 | `level` | 0–1 | Wet level — opacity of the first repeat. 0 = dry passthrough. *audio-bindable* |
 | `feedback` | 0–1 | How much each repeat persists into the next. Low = one clear echo; high = a long even train. *audio-bindable* |
 | `direction` | forward / reverse | forward = delayed copies of the motion; **reverse** = each delay window plays backward on a loop (a reverse delay). |
@@ -57,9 +57,9 @@ is bounded (~2 s); `detail` trades stored-frame sharpness for memory.
 
 | Param | Range | What it does |
 |---|---|---|
-| `spread` | 0–1 | How far the echoes fan out. 0 = stacked (slapback); 1 = the furthest repeat reaches the frame edge (canyon fills the screen). *audio-bindable* |
-| `spreadAngle` | 0–360 ° | Direction the echoes fan (0 = right, 90 = down). *audio-bindable* |
-| `echoScale` | 0.6–1 | Per-repeat size. <1 shrinks each repeat so they recede — the canyon perspective. *audio-bindable* |
+| `spread` | 0–1.5 | How far the echoes fan out. 0 = stacked (slapback); 1 = furthest repeat at the frame edge (canyon fills the screen); >1 flings them partly off-screen. *audio-bindable* |
+| `spreadAngle` | 0–360 ° | Direction the echoes fan (0 = right, 90 = down). Bind an **LFO** source to auto-rotate the canyon, or a **random** source for a randomised angle each trigger. *audio-bindable* |
+| `echoScale` | 0.3–1.5 | Per-repeat size (compounds: `echoScale^k`). <1 shrinks each repeat (recede); >1 **grows** each into a screen-filling bloom — even 1.2 blows up fast. *audio-bindable* |
 
 ### Tone (make the echoes differ from the source)
 
@@ -69,7 +69,7 @@ GPU-accelerated in Chromium).
 
 | Param | Range | What it does |
 |---|---|---|
-| `echoBlur` | 0–10 px | Blur added per repeat (cumulative) — the high-frequency loss; echoes soften as they age. *audio-bindable* |
+| `echoBlur` | 0–30 px | Blur added per repeat (cumulative) — the high-frequency loss; echoes soften as they age. *audio-bindable* |
 | `echoDesat` | 0–1 | Saturation lost per repeat — echoes drift toward grey. *audio-bindable* |
 | `echoDim` | 0–1 | Brightness lost per repeat — a deeper fade on top of the opacity falloff. *audio-bindable* |
 | `hueStep` | -180–180 ° | Hue rotation per repeat — a rainbow echo trail. *audio-bindable* |
@@ -114,6 +114,11 @@ presence**). The filter never samples audio itself — the host senses and pushe
 resolved values in through `setModulatedValues()`. Harness reads
 `modulation.kind: 'audio'`; midi-daddy reads `sourceTypes`/`defaultAmount`.
 
+The marker also lists **lfo** and **random** sources, so in the platform you
+can bind a low-frequency oscillator or random generator to any attribute — e.g.
+an LFO on `spreadAngle` for an auto-rotating canyon, or a random source for a
+randomised angle per beat.
+
 Good starting bindings: **peak → `level`** (ghosts swell with energy),
 **high → `hueStep`** (rainbow trail shimmers on hats), **tempo → `time`**
 (beat-locked repeats), **bass → `spread`** (the canyon breathes open).
@@ -157,6 +162,11 @@ Stack `echo` as a filter **above** moving content:
   `key` luma + `keyLow` ~0.3) so only the foreground trails and the background
   stays clean.
 - **Beat snap:** bind `burst` to a kick and `clear` to the downbeat.
+- **Super-saturation bloom:** `blend` add, `feedback` ~0.9, `repeats` 10–12,
+  `echoScale` ~1.15 — additive repeats accumulate and the growing scale fills
+  the frame, blowing the image out into a white bloom. Pull it back with
+  `level` / `echoDim`. (This is the over-saturation headroom — `add` + high
+  `feedback` + many `repeats` is the recipe; `echoScale` > 1 amplifies it.)
 
 ## Tests
 

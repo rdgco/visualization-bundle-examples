@@ -1,8 +1,9 @@
 # echo
 
-Rhythmic frame-delay — a marching, colour-shifting **ghost train**. A
-Canvas2D filter that keeps a ring buffer of recent frames and composites a
-few fixed-**delay** taps, so the image repeats a beat later.
+Rhythmic frame-delay with **delay-pedal controls** — a marching,
+colour-shifting **ghost train**. A Canvas2D filter that keeps a ring buffer of
+recent frames and composites fixed-time taps, so the image repeats a beat
+later.
 
 This is the bundle's second temporal filter and the deliberate counterpart to
 [`feedback`](../feedback/). Both exploit the same "retain state across frames"
@@ -14,112 +15,154 @@ muscle, but from opposite ends:
 | Data structure | one accumulation buffer (ping-pong) | **ring buffer** of ~120 frames |
 | Implementation | WebGL (smooth warp needs a shader) | **Canvas2D** (delay-and-composite needs no per-pixel math) |
 
-`echo` is here to show the retained-state pattern **generalises beyond
-shaders** — it's just an array of ordinary offscreen canvases, time-stamped
-and read back at `now − delay·k`.
+`echo` is a clean **multi-tap** delay (each repeat reads the original source at
+a different delay), not a regenerative one — repeats-of-repeats (true feedback)
+are `feedback`'s job. The Tone group fakes the analog "each echo is more
+degraded" look without re-circulating.
 
 ## What it does
 
 ```
                 ┌──────────────── ring buffer (time-stamped frames) ────────────────┐
-source ─► write(downscaled, t=now) ─► [ … ][ … ][ … ][ … ][ … ]                      │
-   │                                     ▲       ▲       ▲                            │
-   │                          read now-delay  now-2·delay  now-3·delay  (nearest t)   │
-   ▼                                     │       │       │                            │
-  ctx ◄── live source ◄── tap1 (echoLevel) ◄ tap2 (·falloff) ◄ tap3 (·falloff²) ◄────┘
+source ─► write(downscaled, keyed, t=now) ─► [ … ][ … ][ … ][ … ][ … ]               │
+   │                                            ▲       ▲       ▲                     │
+   │                                 read now-time  now-2·time  now-3·time            │
+   ▼                                            │       │       │                     │
+  ctx ◄── live source ◄── repeat1 (level) ◄ repeat2 (·feedback) ◄ repeat3 (·fb²) ◄────┘
+                          └── each repeat: spread + scale + Tone (blur/desat/dim/hue) ──┘
 ```
 
-Each frame: store the live frame (downscaled by `detail`) into the ring,
-stamped with the current time. Then draw the live source, and for tap
-`k = 1..taps` look up the stored frame nearest `now − delay·k` and composite
-it at `echoLevel · falloff^(k-1)`, with an optional per-tap drift (`offsetX/Y`)
-and hue step (`hueStep`).
+Each frame: store the live frame (downscaled by `detail`, and colour/luma-keyed
+if a key is active) into the ring with a timestamp. Then draw the live source,
+and for repeat `k = 1..repeats` look up the stored frame at the tap's age and
+composite it at `level · feedback^(k-1)`, fanned by `spread`, sized by
+`echoScale`, and toned by the Tone group.
 
-Lookups are **time-indexed, not frame-indexed**, so the echo timing is
-frame-rate independent and survives stalls. The ring is sized to cover the
-deepest tap (`taps_max · delay_max` = 2000 ms).
+Lookups are **time-indexed**, so the timing is frame-rate independent. The ring
+is bounded (~2 s); `detail` trades stored-frame sharpness for memory.
 
 ## Params
 
+### Delay (the pedal core)
+
 | Param | Range | What it does |
 |---|---|---|
-| `delay` | 10–500 ms | Time between echoes. ~120–250 ms reads as a tight rhythmic echo; bind to tempo for beat-locked repeats. *audio-bindable* |
-| `echoCount` | 1–8 | How many ghosts. Echo k shows the frame from `delay·k` ago. Crank it with `spread` for a canyon. Structural — not modulated. |
-| `echoLevel` | 0–1 | Opacity of the first echo. 0 = passthrough; later echoes fall off by `falloff`. *audio-bindable* |
-| `falloff` | 0–1 | Opacity ratio between successive echoes. Low = one clear echo; high = a long even train. *audio-bindable* |
-| `spread` | 0–1 | How far the echoes fan out across the screen. 0 = stacked in place (slapback); 1 = furthest echo reaches the frame edge (canyon fills the screen). *audio-bindable* |
-| `spreadAngle` | 0–360 ° | Direction the echoes fan (0 = right, 90 = down) — the axis of the canyon. *audio-bindable* |
-| `echoScale` | 0.6–1 | Per-echo size multiplier. 1 = full size; <1 shrinks each successive echo so they recede into the distance (canyon perspective). *audio-bindable* |
-| `hueStep` | -180–180 ° | Hue rotation added per echo — a rainbow echo trail. *audio-bindable* |
-| `blend` | screen / add / over | How echoes composite. screen = glowing/clamped (default); add = additive (diverges from screen in bright/overlapping regions); over = opaque ghosts under the source. |
-| `detail` | 0.25–1 | Resolution the ring stores frames at. The **memory lever** — see below. Structural — not modulated. |
+| `time` | 10–500 ms | Delay time between repeats. ~120–250 ms = tight rhythmic echo; bind to tempo for beat-locked repeats. *audio-bindable* |
+| `repeats` | 1–8 | How many repeats (taps). Repeat k shows the frame from `time·k` ago. Structural — not modulated. |
+| `level` | 0–1 | Wet level — opacity of the first repeat. 0 = dry passthrough. *audio-bindable* |
+| `feedback` | 0–1 | How much each repeat persists into the next. Low = one clear echo; high = a long even train. *audio-bindable* |
+| `direction` | forward / reverse | forward = delayed copies of the motion; **reverse** = each delay window plays backward on a loop (a reverse delay). |
 
-`echoCount` and `detail` are deliberately **not** audio-bindable: `echoCount`
-is an integer count and `detail` reallocates the ring, so neither wants
-per-frame modulation.
+### Spread (the canyon)
+
+| Param | Range | What it does |
+|---|---|---|
+| `spread` | 0–1 | How far the echoes fan out. 0 = stacked (slapback); 1 = the furthest repeat reaches the frame edge (canyon fills the screen). *audio-bindable* |
+| `spreadAngle` | 0–360 ° | Direction the echoes fan (0 = right, 90 = down). *audio-bindable* |
+| `echoScale` | 0.6–1 | Per-repeat size. <1 shrinks each repeat so they recede — the canyon perspective. *audio-bindable* |
+
+### Tone (make the echoes differ from the source)
+
+The analog-delay character: each repeat is progressively filtered, so the
+ghosts look unlike the live image. Built from a chained `ctx.filter` (all
+GPU-accelerated in Chromium).
+
+| Param | Range | What it does |
+|---|---|---|
+| `echoBlur` | 0–10 px | Blur added per repeat (cumulative) — the high-frequency loss; echoes soften as they age. *audio-bindable* |
+| `echoDesat` | 0–1 | Saturation lost per repeat — echoes drift toward grey. *audio-bindable* |
+| `echoDim` | 0–1 | Brightness lost per repeat — a deeper fade on top of the opacity falloff. *audio-bindable* |
+| `hueStep` | -180–180 ° | Hue rotation per repeat — a rainbow echo trail. *audio-bindable* |
+
+### Key (echo only part of the image)
+
+Echo only a brightness band or a colour, so the **background gets no ghosts**.
+The key is applied once when the frame is stored (at `detail` resolution), so
+all taps inherit the cutout at no per-tap cost. The live source still draws
+fully — only the echoes are masked.
+
+| Param | Range | What it does |
+|---|---|---|
+| `key` | off / luma / color | off = echo everything; luma = echo only a brightness band; color = echo only pixels near `keyColor`. |
+| `keyLow` / `keyHigh` | 0–1 | luma mode: the brightness band to echo. Raise `keyLow` to drop a dark background; lower `keyHigh` to drop a bright one. *audio-bindable* |
+| `keyColor` | hex | color mode: the colour to echo (or drop, with `keyInvert`). |
+| `keyTolerance` | 0–1 | color mode: how close to `keyColor` a pixel must be to be echoed. *audio-bindable* |
+| `keyInvert` | bool | Echo the **complement** — everything except the keyed range. Use to drop a known background colour. |
+| `keySoftness` | 0–1 | Soft edge on the cutout so it isn't jagged. |
+
+### Output
+
+| Param | Range | What it does |
+|---|---|---|
+| `blend` | screen / add / over | How echoes composite. screen = glowing/clamped (default); add = additive (diverges from screen in bright/overlapping regions); over = opaque ghosts under the source. |
+| `detail` | 0.25–1 | Resolution the ring stores frames at. The **memory + key-cost lever** — see below. Structural — not modulated. |
+
+`repeats`, `direction`, `key`, `keyColor`, `keyInvert`, `keySoftness`, `blend`
+and `detail` are deliberately **not** audio-bindable (integer / enum / colour /
+ring-reallocating).
 
 > **Reading the controls:** stacked echoes (`spread` 0) over a dark, slowly
-> moving source make `falloff` and the `blend` modes hard to tell apart —
-> the ghosts pile on the same pixels. Turn `spread` up so each echo lands in
-> its own spot and both become obvious: `falloff` is the brightness fade down
-> the canyon, and `add` vs `screen` shows where ghosts overlap.
+> moving source make `feedback` and the `blend` modes hard to tell apart — the
+> ghosts pile on the same pixels. Turn `spread` up so each echo lands in its
+> own spot and both become obvious.
 
 ## Audio
 
-Every continuous attribute carries the cross-host audio-modulation marker, so
-a host can drive it from a live audio level (**peak / sub / bass / mid / high /
-presence**). The filter never samples audio itself — the host senses and
-pushes resolved values in through `setModulatedValues()` (sense in the host,
-map on the patch, the visual stays audio-blind). Harness reads
+Every continuous attribute carries the cross-host audio-modulation marker, so a
+host can drive it from a live audio level (**peak / sub / bass / mid / high /
+presence**). The filter never samples audio itself — the host senses and pushes
+resolved values in through `setModulatedValues()`. Harness reads
 `modulation.kind: 'audio'`; midi-daddy reads `sourceTypes`/`defaultAmount`.
 
-Good starting bindings: **peak → `echoLevel`** (ghosts swell with energy),
-**high → `hueStep`** (rainbow trail shimmers on hats), **tempo → `delay`**
-(beat-locked repeats), **bass → `spread`** (the canyon breathes open on the
-low end).
+Good starting bindings: **peak → `level`** (ghosts swell with energy),
+**high → `hueStep`** (rainbow trail shimmers on hats), **tempo → `time`**
+(beat-locked repeats), **bass → `spread`** (the canyon breathes open).
 
 ## Reactions
 
 | Reaction | Args | What it does |
 |---|---|---|
-| `burst` | `strength` 0–1 | Swell the echo on a transient (~400 ms decaying envelope): lifts every tap toward full so a cloud of ghosts blooms on the beat, then settles back. |
-| `clear` | — | Flush the delay line — wipes every stored frame so the tail vanishes instantly and rebuilds from live. A **state-reset** reaction (no decay envelope) — fire on a downbeat to snap the screen clean. |
+| `burst` | `strength` 0–1 | Swell the echo on a transient (~400 ms decaying envelope): lifts every repeat toward full so a cloud of ghosts blooms on the beat, then settles back. |
+| `clear` | — | Flush the delay line — wipes every stored frame so the tail vanishes instantly. A **state-reset** reaction (no decay envelope). |
 
-## Memory
+## Memory & cost
 
 The ring holds ~120 frames (2 s at 60 fps) at `detail` resolution. At 1080p:
-`detail` 1.0 ≈ 1 GB, 0.5 ≈ 250 MB, 0.3 ≈ 90 MB. **Default 0.5** is the
-sweet spot — ghosts are slightly soft (you rarely notice on a moving echo) for
-a quarter of full-res RAM. Drop it on memory-constrained rigs; the only cost
-is softer ghosts.
+`detail` 1.0 ≈ 1 GB, 0.5 ≈ 250 MB (**default**), 0.3 ≈ 90 MB. The key pass
+(when active) is a per-pixel `getImageData` loop at the same `detail`
+resolution — another reason to keep `detail` modest. Tone blurs run on the GPU
+via `ctx.filter`. Drop `detail` on constrained rigs; the only cost is softer
+ghosts.
 
 ## Running it
 
-Stack `echo` as a filter **above** moving content — same two test layers as
-`feedback`:
+Stack `echo` as a filter **above** moving content:
 
-- **`vibrations`** — the audio-reactive rings make each delayed tap legible;
-  bind `peak → echoLevel` for ghosts that swell with the track.
+- **`vibrations`** — the audio-reactive rings make each delayed repeat legible;
+  bind `peak → level`.
 - **`skyline`** — the moving camera leaves a rhythmic ghost train; raise
-  `spread` for echoes that fan across the skyline.
+  `spread` for echoes that fan across the skyline, or set `key: luma`,
+  `keyLow` ~0.3 to echo only the lit buildings and not the night sky.
 
 ## Looks to try
 
-- **Tight slapback:** `delay` ~120 ms, `echoCount` 2, `falloff` ~0.4,
-  `spread` 0 — one crisp ghost, like a tape slap.
-- **Canyon:** `echoCount` 8, `spread` ~0.8, `echoScale` ~0.9, `falloff` ~0.8 —
-  a wall of receding echoes filling the screen. Spin `spreadAngle` to aim it.
-- **Ghost train:** `delay` ~200 ms, `echoCount` 4, `falloff` ~0.7, `spread`
-  ~0.4 — four echoes marching off to one side.
-- **Rainbow canyon:** the Canyon preset plus `hueStep` ~30°, `blend` screen —
-  each receding echo a different colour.
-- **Beat snap:** bind `burst` to a kick (echo blooms) and `clear` to the
-  downbeat (tail wipes clean).
+- **Tight slapback:** `time` ~120 ms, `repeats` 2, `feedback` ~0.4, `spread` 0.
+- **Canyon:** `repeats` 8, `spread` ~0.8, `echoScale` ~0.9, `feedback` ~0.8 —
+  a wall of receding echoes. Spin `spreadAngle` to aim it.
+- **Analog tape:** add `echoBlur` ~2, `echoDesat` ~0.25, `echoDim` ~0.15 — each
+  repeat softer, greyer, darker, like a degrading tape echo.
+- **Reverse swell:** `direction` reverse, `time` ~300 ms, `feedback` ~0.7 — the
+  motion rewinds into itself.
+- **Keyed foreground:** `key` color, `keyColor` to your subject's hue (or
+  `key` luma + `keyLow` ~0.3) so only the foreground trails and the background
+  stays clean.
+- **Beat snap:** bind `burst` to a kick and `clear` to the downbeat.
 
 ## Tests
 
 `echo-filter.test.js` is a standalone runner (`node
 filters/echo/echo-filter.test.js`) covering the DOM-independent logic: param
-clamping + tap rounding, the `burst` envelope, the `clear` reset, blend-mode
-mapping, audio markers, the no-DOM passthrough, and lifecycle no-throws. The
-ring buffer itself is verified visually in a host.
+clamping + rounding, key colour parsing, the key math (smoothstep / bandKeep /
+colorKeep), the `burst` envelope, the `clear` reset, blend-mode mapping, audio
+markers, contiguous param grouping, the no-DOM passthrough, and lifecycle
+no-throws. The ring buffer + key cutout are verified visually in a host.

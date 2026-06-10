@@ -17,11 +17,16 @@
  *
  * Modes:
  *   - manual  — live until you `capture`; then the grabbed frame holds (over
- *     `mix`) until `release`. The performance / freeze-on-a-hit mode.
+ *     `wet`) until `release`. The performance / freeze-on-a-hit mode.
  *   - stutter — auto: re-grab every `holdTime` ms and hold, so motion judders
  *     forward in chunks. Bind `holdTime` to tempo for beat-synced stutter.
  *   - slice   — like stutter, but only a random subset of bands freeze each
  *     window (the rest stay live) — a torn, datamosh look.
+ *
+ * `dry` (live) and `wet` (frozen) are tuned independently, so you can crossfade
+ * the original against the freeze any way you like. After each capture the
+ * frozen frame departs per `sublimation` (hold / fade / flicker / dissolve)
+ * over `fadeTime` — fading or flickering away into an ethereal absence.
  *
  * Timing is wall-clock (`performance.now()`), so the stutter rate is
  * frame-rate independent.
@@ -37,11 +42,14 @@ export const description =
   'adding history). manual mode freezes on a `capture` reaction until ' +
   '`release`; stutter mode re-grabs every `holdTime` ms (bind to tempo) for a ' +
   'beat-synced judder; slice mode freezes a random subset of bands for a torn ' +
-  'datamosh look. `mix` blends the frozen frame over live. Introduces the ' +
-  'capture/grab reaction shape.';
+  'datamosh look. Independent `dry`/`wet` opacities crossfade live against the ' +
+  'freeze, and `sublimation` (fade / flicker / dissolve) lets the frozen frame ' +
+  'depart over `fadeTime`. Introduces the capture/grab reaction shape.';
 
 const MODES = ['manual', 'stutter', 'slice'];
 const AXES = ['horizontal', 'vertical'];
+const SUBLIMATIONS = ['hold', 'fade', 'flicker', 'dissolve'];
+const MAX_DISSOLVE_BLUR = 24; // px the dissolve sublimation blurs to as it leaves
 
 // Cross-host audio-modulation marker (see other filters for the rationale).
 // Includes lfo + random so the platform's generators can drive any attribute.
@@ -81,18 +89,80 @@ export const params = {
     modulation: audioMod(80),
     paramGroup: 'freeze'
   },
-  mix: {
+  dry: {
     type: 'number',
-    label: 'Mix',
+    label: 'Dry (live)',
     default: 1,
     min: 0,
     max: 1,
     step: 0.01,
     description:
-      'How strongly the frozen frame covers the live image. 1 = fully frozen; ' +
-      '<1 = a ghost of the freeze over live motion. 0 = no freeze (live).',
+      'Opacity of the live / original image — always active, in every mode and ' +
+      'whether or not anything is frozen. Fade it down to dissolve the live ' +
+      'picture (toward the background) while the frozen `wet` layer holds. The ' +
+      'reliable audio target: bind a level here and the original breathes with ' +
+      'the music regardless of mode.',
     modulation: audioMod(0.4),
     paramGroup: 'freeze'
+  },
+  wet: {
+    type: 'number',
+    label: 'Wet (frozen)',
+    default: 1,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description:
+      'Opacity of the frozen frame where it shows. 1 = fully frozen over live; ' +
+      '<1 = a ghost of the freeze. Tuned independently of `dry`, so you can ' +
+      'crossfade live and frozen any way you like.',
+    modulation: audioMod(0.4),
+    paramGroup: 'freeze'
+  },
+
+  // ── Sublimation (how the frozen frame leaves) ───────────────────────────
+  sublimation: {
+    type: 'enum',
+    label: 'Sublimation',
+    options: SUBLIMATIONS,
+    default: 'hold',
+    description:
+      'How the frozen frame departs after each capture. hold = stays put (no ' +
+      'fade); fade = smoothly fades to absence over `fadeTime`; flicker = blinks ' +
+      'out, increasingly off as it goes; dissolve = blurs and fades into an ' +
+      'ethereal cloud. The frame leaves over `fadeTime` measured from each grab ' +
+      '(so in stutter mode every held frame breathes out).',
+    paramGroup: 'sublimation',
+    paramGroupLabel: 'Sublimation',
+    paramGroupCollapsed: false
+  },
+  fadeTime: {
+    type: 'number',
+    label: 'Fade Time',
+    default: 1000,
+    min: 50,
+    max: 5000,
+    step: 10,
+    description:
+      'How long the frozen frame takes to sublimate away after a capture, in ' +
+      'milliseconds (ignored when sublimation = hold). In stutter / slice it ' +
+      'resets each window; set it shorter than `holdTime` and the freeze ' +
+      'vanishes before the next grab (strobe gaps).',
+    modulation: audioMod(400),
+    paramGroup: 'sublimation'
+  },
+  flickerRate: {
+    type: 'number',
+    label: 'Flicker Rate',
+    default: 12,
+    min: 1,
+    max: 30,
+    step: 0.5,
+    description:
+      'flicker sublimation: how fast the frozen frame blinks (Hz) as it goes. ' +
+      'Higher = a faster strobe-out.',
+    modulation: audioMod(6),
+    paramGroup: 'sublimation'
   },
 
   // ── Slice ──────────────────────────────────────────────────────────────
@@ -164,10 +234,18 @@ export default class FreezeFilter {
     // Resolved control state.
     this._mode = 'stutter';
     this._holdTime = 150;
-    this._mix = 1;
+    this._dry = 1;
+    this._wet = 1;
+    this._sublimation = 'hold';
+    this._fadeTime = 1000;
+    this._flickerRate = 12;
     this._sliceCount = 8;
     this._sliceAmount = 0.5;
     this._sliceAxis = 'horizontal';
+
+    // Flicker-sublimation gate.
+    this._flickerOn = true;
+    this._flickerNext = -Infinity;
 
     // Hold state.
     this._frozen = false;        // manual mode: showing the held frame?
@@ -187,7 +265,11 @@ export default class FreezeFilter {
     if (!p) return;
     if (typeof p.mode === 'string' && MODES.includes(p.mode)) this._mode = p.mode;
     if (typeof p.holdTime === 'number' && Number.isFinite(p.holdTime)) this._holdTime = clamp(p.holdTime, 20, 2000);
-    if (typeof p.mix === 'number' && Number.isFinite(p.mix)) this._mix = clamp(p.mix, 0, 1);
+    if (typeof p.dry === 'number' && Number.isFinite(p.dry)) this._dry = clamp(p.dry, 0, 1);
+    if (typeof p.wet === 'number' && Number.isFinite(p.wet)) this._wet = clamp(p.wet, 0, 1);
+    if (typeof p.sublimation === 'string' && SUBLIMATIONS.includes(p.sublimation)) this._sublimation = p.sublimation;
+    if (typeof p.fadeTime === 'number' && Number.isFinite(p.fadeTime)) this._fadeTime = clamp(p.fadeTime, 50, 5000);
+    if (typeof p.flickerRate === 'number' && Number.isFinite(p.flickerRate)) this._flickerRate = clamp(p.flickerRate, 1, 30);
     if (typeof p.sliceCount === 'number' && Number.isFinite(p.sliceCount)) this._sliceCount = clamp(Math.round(p.sliceCount), 2, 32);
     if (typeof p.sliceAmount === 'number' && Number.isFinite(p.sliceAmount)) this._sliceAmount = clamp(p.sliceAmount, 0, 1);
     if (typeof p.sliceAxis === 'string' && AXES.includes(p.sliceAxis)) this._sliceAxis = p.sliceAxis;
@@ -233,6 +315,13 @@ export default class FreezeFilter {
   _dueForCapture(now) {
     if (this._mode !== 'stutter' && this._mode !== 'slice') return false;
     return now - this._holdStart >= this._holdTime;
+  }
+
+  // Sublimation progress 0..1 since the last capture (0 = just grabbed / hold
+  // mode, 1 = fully departed). Drives fade / flicker / dissolve.
+  _fadeProgress(elapsed) {
+    if (this._sublimation === 'hold' || this._fadeTime <= 0) return 0;
+    return clamp(elapsed / this._fadeTime, 0, 1);
   }
 
   _ensureHeld() {
@@ -290,18 +379,43 @@ export default class FreezeFilter {
       this._heldCtx.drawImage(sourceCanvas, 0, 0, this._w, this._h);
       this._holdStart = now;
       this._hasHeld = true;
+      this._flickerOn = true; // fresh capture starts visible
       if (this._mode === 'slice') this._rollBands();
     }
 
-    // Live source underneath.
+    // Live (dry) base — 'copy' so `dry` actually attenuates the original
+    // (the vignette filter's idiom); dry = 1 is identity.
+    ctx.save();
+    ctx.globalCompositeOperation = 'copy';
+    ctx.globalAlpha = this._dry;
     ctx.drawImage(sourceCanvas, 0, 0, this._w, this._h);
+    ctx.restore();
 
-    // Overlay the held frame where the mode calls for it.
+    // Overlay the held (wet) frame where the mode calls for it, attenuated by
+    // the sublimation envelope so the freeze can fade / flicker / dissolve away.
     const showHeld = this._mode === 'manual' ? this._frozen : true;
-    if (!showHeld || !this._hasHeld || this._mix <= 0) return;
+    if (!showHeld || !this._hasHeld) return;
+
+    const p = this._fadeProgress(now - this._holdStart);
+    let factor = 1;
+    if (this._sublimation === 'fade' || this._sublimation === 'dissolve') {
+      factor = 1 - p;
+    } else if (this._sublimation === 'flicker') {
+      // Re-roll the gate at flickerRate; on-probability falls to 0 as it leaves.
+      if (now >= this._flickerNext) {
+        this._flickerOn = Math.random() < (1 - p);
+        this._flickerNext = now + 1000 / this._flickerRate;
+      }
+      factor = this._flickerOn ? 1 : 0;
+    }
+    const effWet = this._wet * factor;
+    if (effWet <= 0.003) return;
 
     ctx.save();
-    ctx.globalAlpha = this._mix;
+    ctx.globalAlpha = effWet;
+    if (this._sublimation === 'dissolve' && p > 0) {
+      ctx.filter = `blur(${(p * MAX_DISSOLVE_BLUR).toFixed(2)}px)`;
+    }
     if (this._mode === 'slice') {
       this._drawFrozenBands(ctx);
     } else {

@@ -39,7 +39,19 @@ Timing is wall-clock, so the stutter rate is frame-rate independent.
 |---|---|---|
 | `mode` | manual / stutter / slice | See above. Structural — not modulated. |
 | `holdTime` | 20–2000 ms | stutter / slice: how long each captured frame holds before re-grabbing. Short = fast judder; long = chunky freeze. Bind to tempo. *audio-bindable* |
-| `mix` | 0–1 | How strongly the frozen frame covers live. 1 = fully frozen; <1 = a ghost of the freeze over live motion; 0 = live. *audio-bindable* |
+| `dry` | 0–1 | Opacity of the live / original — **always active, every mode**. Fade it to dissolve the original while the freeze holds. The reliable audio target. *audio-bindable* |
+| `wet` | 0–1 | Opacity of the frozen frame where it shows. Tuned independently of `dry`, so you can crossfade live against frozen. *audio-bindable* |
+
+### Sublimation — how the frozen frame leaves
+
+After each capture the frozen frame departs over `fadeTime` (measured from the
+grab, so in stutter/slice every held frame breathes out within its window).
+
+| Param | Range | What it does |
+|---|---|---|
+| `sublimation` | hold / fade / flicker / dissolve | hold = stays (no fade); fade = smoothly to absence; flicker = blinks out, increasingly off; dissolve = blurs + fades into an ethereal cloud. |
+| `fadeTime` | 50–5000 ms | How long the departure takes (ignored for `hold`). Shorter than `holdTime` in stutter = the freeze vanishes before the next grab (strobe gaps). *audio-bindable* |
+| `flickerRate` | 1–30 Hz | flicker mode: how fast it blinks as it goes. *audio-bindable* |
 
 ### Slice (slice mode only)
 
@@ -61,16 +73,25 @@ next downbeat — the image freezes on the hit and snaps back to live.
 
 ## Audio
 
-`holdTime`, `mix` and `sliceAmount` carry the cross-host audio-modulation
-marker, so a host can drive them from a live audio level (**peak / sub / bass /
-mid / high / presence**) — and from **lfo / random** sources in the platform.
-The filter never samples audio itself; the host pushes resolved values via
-`setModulatedValues()`. Harness reads `modulation.kind: 'audio'`; midi-daddy
-reads `sourceTypes`/`defaultAmount`.
+`holdTime`, `dry`, `wet`, `fadeTime`, `flickerRate` and `sliceAmount` carry the
+cross-host audio-modulation marker, so a host can drive them from a live audio
+level (**peak / sub / bass / mid / high / presence**) — and from **lfo /
+random** sources in the platform. The filter never samples audio itself; the
+host pushes resolved values via `setModulatedValues()`. Harness reads
+`modulation.kind: 'audio'`; midi-daddy reads `sourceTypes`/`defaultAmount`.
+
+> **Not seeing audio do anything?** Two gotchas. (1) Most knobs are
+> **mode-specific** — `holdTime` only matters in stutter/slice, `wet` only when
+> something is frozen, `sliceAmount` only in slice. In **manual mode with
+> nothing captured the filter is a passthrough**, so bindings have nothing to
+> act on. (2) A base value at the rail has no headroom — `wet`/`dry` default to
+> 1, so a *positive* binding is clamped; bind **bipolar**, or lower the base.
+> **`dry` is the always-active target**: it works in every mode whether or not
+> anything is frozen — bind a level there first to confirm audio is flowing.
 
 Good starting bindings: **tempo → `holdTime`** (beat-locked stutter),
-**peak → `mix`** (freeze bites harder on hits), **bass → `sliceAmount`** (the
-tear opens and closes with the low end).
+**peak → `dry`** (the original dims on hits while the freeze hangs),
+**bass → `sliceAmount`** (the tear opens and closes with the low end).
 
 ## Running it
 
@@ -85,8 +106,16 @@ Stack `freeze` as a filter **above** moving content (`vibrations`, `skyline`):
 
 - **Beat stutter:** `mode` stutter, bind `holdTime` to tempo, `mix` 1.
 - **Freeze on the hit:** `mode` manual, `capture` → snare, `release` → downbeat.
-- **Ghost freeze:** `mode` manual, `mix` ~0.5 — the frozen frame hangs as a
+- **Ghost freeze:** `mode` manual, `wet` ~0.5 — the frozen frame hangs as a
   ghost while live motion plays through it.
+- **Sublimating freeze:** `mode` manual, `capture` on a hit, `sublimation`
+  fade, `fadeTime` ~1500 — the frame freezes then melts to absence.
+- **Flicker-out:** `sublimation` flicker, `flickerRate` ~16 — the freeze
+  strobes away into nothing.
+- **Ethereal dissolve:** `sublimation` dissolve — the frozen frame blurs into a
+  soft cloud as it fades. Pair with `dry` < 1 to thin the live too.
+- **Breathing stutter:** `mode` stutter, `sublimation` fade, `fadeTime` ≈
+  `holdTime` — each held frame fades out just as the next is grabbed.
 - **Datamosh tear:** `mode` slice, `sliceCount` ~16, bind `sliceAmount` to peak
   so the tearing surges on transients.
 

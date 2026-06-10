@@ -45,17 +45,31 @@ test('render is a safe passthrough when no DOM is available', () => {
 // ── param clamping ─────────────────────────────────────────────────────────
 test('params clamp + round; enums validate', () => {
   const f = new FreezeFilter(10, 10);
-  f.updateParams({ mode: 'slice', holdTime: 9999, mix: 5, sliceCount: 99, sliceAmount: -1, sliceAxis: 'vertical' });
+  f.updateParams({ mode: 'slice', holdTime: 9999, dry: 5, wet: -1, sublimation: 'dissolve', fadeTime: 99999, sliceCount: 99, sliceAmount: -1, sliceAxis: 'vertical' });
   assert.strictEqual(f._mode, 'slice', 'mode enum applied');
   assert.strictEqual(f._holdTime, 2000, 'holdTime capped');
-  assert.strictEqual(f._mix, 1, 'mix capped');
+  assert.strictEqual(f._dry, 1, 'dry capped');
+  assert.strictEqual(f._wet, 0, 'wet floored');
+  assert.strictEqual(f._sublimation, 'dissolve', 'sublimation enum applied');
+  assert.strictEqual(f._fadeTime, 5000, 'fadeTime capped');
   assert.strictEqual(f._sliceCount, 32, 'sliceCount capped');
   assert.strictEqual(f._sliceAmount, 0, 'sliceAmount floored');
   assert.strictEqual(f._sliceAxis, 'vertical', 'axis enum applied');
-  f.updateParams({ sliceCount: 5.6, mode: 'bogus', sliceAxis: 'diagonal' });
+  f.updateParams({ sliceCount: 5.6, mode: 'bogus', sublimation: 'nope', sliceAxis: 'diagonal' });
   assert.strictEqual(f._sliceCount, 6, 'sliceCount rounds');
   assert.strictEqual(f._mode, 'slice', 'invalid mode ignored');
+  assert.strictEqual(f._sublimation, 'dissolve', 'invalid sublimation ignored');
   assert.strictEqual(f._sliceAxis, 'vertical', 'invalid axis ignored');
+});
+
+test('sublimation progress: 0 while holding, ramps to 1 over fadeTime', () => {
+  const f = new FreezeFilter(10, 10);
+  f.updateParams({ sublimation: 'hold', fadeTime: 1000 });
+  assert.strictEqual(f._fadeProgress(9999), 0, 'hold never progresses');
+  f.updateParams({ sublimation: 'fade' });
+  assert.strictEqual(f._fadeProgress(0), 0, 'just captured');
+  assert.strictEqual(f._fadeProgress(500), 0.5, 'halfway through fadeTime');
+  assert.strictEqual(f._fadeProgress(5000), 1, 'clamped at fully departed');
 });
 
 // ── reactions (capture / release) ──────────────────────────────────────────
@@ -88,10 +102,10 @@ test('auto modes are due for capture once the hold window elapses', () => {
 // ── audio binding markers ──────────────────────────────────────────────────
 test('continuous attributes are audio-bindable; structural ones are not', async () => {
   const mod = await import('./freeze-filter.js');
-  for (const name of ['holdTime', 'mix', 'sliceAmount']) {
+  for (const name of ['holdTime', 'dry', 'wet', 'fadeTime', 'flickerRate', 'sliceAmount']) {
     assert.strictEqual(mod.params[name].modulation?.kind, 'audio', `${name} should be audio-bindable`);
   }
-  for (const name of ['mode', 'sliceCount', 'sliceAxis']) {
+  for (const name of ['mode', 'sublimation', 'sliceCount', 'sliceAxis']) {
     assert.strictEqual(mod.params[name].modulation, undefined, `${name} should not be modulatable`);
   }
 });
@@ -112,7 +126,7 @@ test('every param belongs to a contiguous paramGroup (no split sections)', async
 // ── lifecycle no-throws ────────────────────────────────────────────────────
 test('setModulatedValues / resize / cleanup do not throw', () => {
   const f = new FreezeFilter(10, 10);
-  f.setModulatedValues({ mix: 0.5 });
+  f.setModulatedValues({ dry: 0.5 });
   f.resize(20, 20);
   f.cleanup();
   assert.strictEqual(f.isActive(), false);

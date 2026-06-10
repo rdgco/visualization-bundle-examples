@@ -80,6 +80,35 @@ test('pulse arms a decaying envelope; unknown reaction throws', () => {
   assert.throws(() => f.react('bogus'), /unknown reaction/);
 });
 
+// ── reverse reaction (spin direction) ──────────────────────────────────────
+test('reverse toggles spin sign and honours forced modes', () => {
+  const f = new FeedbackFilter(10, 10);
+  assert.strictEqual(f._spinSign, 1, 'forward by default');
+  f.react('reverse');
+  assert.strictEqual(f._spinSign, -1, 'toggle flips');
+  f.react('reverse');
+  assert.strictEqual(f._spinSign, 1, 'toggle flips back');
+  f.react('reverse', { mode: 'reverse' });
+  assert.strictEqual(f._spinSign, -1, 'forced reverse');
+  f.react('reverse', { mode: 'reverse' });
+  assert.strictEqual(f._spinSign, -1, 'forced reverse is idempotent');
+  f.react('reverse', { mode: 'forward' });
+  assert.strictEqual(f._spinSign, 1, 'forced forward');
+});
+
+test('every numeric param is audio-bindable (kind: audio marker)', async () => {
+  const mod = await import('./feedback-filter.js');
+  const numeric = Object.entries(mod.params).filter(([, s]) => s.type === 'number');
+  assert.ok(numeric.length >= 7, 'expected the full numeric attribute set');
+  for (const [name, spec] of numeric) {
+    assert.strictEqual(spec.modulation?.kind, 'audio', `${name} missing audio marker`);
+    assert.ok(
+      Array.isArray(spec.modulation.sourceTypes) && spec.modulation.sourceTypes.includes('audio'),
+      `${name} missing audio sourceType`
+    );
+  }
+});
+
 // ── lifecycle no-throws ────────────────────────────────────────────────────
 test('setModulatedValues / resize / cleanup do not throw', () => {
   const f = new FeedbackFilter(10, 10);

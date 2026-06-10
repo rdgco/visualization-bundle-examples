@@ -44,23 +44,43 @@ is frame-rate independent (deg/sec, per-60fps-frame persistence, etc.).
 
 | Param | Range | What it does |
 |---|---|---|
-| `trailPersistence` | 0–0.99 | **Trail length.** Fraction of the previous frame surviving per 60fps frame. 0 = passthrough; 0.99 = long, slow-decaying trails. *modulatable* |
-| `sourceGain` | 0–2 | How hard the current frame is injected over the trail. <1 lets the trail dominate; >1 over-drives bright sources into bloom. *modulatable* |
+| `trailPersistence` | 0–0.99 | **Trail length.** Fraction of the previous frame surviving per 60fps frame. 0 = passthrough; 0.99 = long, slow-decaying trails. *audio-bindable* |
+| `sourceGain` | 0–2 | How hard the current frame is injected over the trail. <1 lets the trail dominate; >1 over-drives bright sources into bloom. *audio-bindable* |
 | `blend` | screen / add / over | How the current frame combines with the trail. `screen` = glowing, clamped (default); `add` = pure additive (blows out fast); `over` = opaque source over the trail. |
-| `feedbackZoom` | 0.9–1.1 | Per-frame scale of the feedback. 1 = none, >1 tunnel toward you, <1 tunnel away. Tiny values read strong because the effect compounds. *modulatable* |
-| `feedbackRotate` | -45–45 °/s | Spins the trail into a spiral; pairs with zoom for a rotating tunnel. *modulatable* |
-| `feedbackShiftX` / `feedbackShiftY` | ±0.05 | Per-frame drift of the feedback (fraction of width/height). *modulatable* |
-| `hueDrift` | -180–180 °/s | Hue rotation of the trail. Compounds over retained frames, so a few °/s cycles the whole spectrum — the psychedelic colour-smear. *modulatable* |
+| `feedbackZoom` | 0.9–1.1 | Per-frame scale of the feedback. 1 = none, >1 tunnel toward you, <1 tunnel away. Tiny values read strong because the effect compounds. *audio-bindable* |
+| `feedbackRotate` | -180–180 °/s | Signed rotation velocity — negative spins one way, positive the other. Spins the trail into a spiral; pairs with zoom for a rotating tunnel. The `reverse` reaction flips its direction live. *audio-bindable* |
+| `feedbackShiftX` / `feedbackShiftY` | ±0.05 | Per-frame drift of the feedback (fraction of width/height). *audio-bindable* |
+| `hueDrift` | -180–180 °/s | Hue rotation of the trail. Compounds over retained frames, so a few °/s cycles the whole spectrum — the psychedelic colour-smear. *audio-bindable* |
+
+## Audio
+
+Every numeric attribute carries a cross-host audio-modulation marker, so a
+host can drive any of them from a live audio level (**peak / sub / bass / mid /
+high / presence**). The filter never samples audio itself — the host senses
+once and pushes the resolved value in through `setModulatedValues()` each
+frame (sense in the host, map on the patch, the visual stays audio-blind).
+
+- **visualization-harness** reads `modulation.kind: 'audio'` and auto-wires
+  the attribute into its audio→patch rig (per-param binding dropdown).
+- **midi-daddy** reads `modulation.sourceTypes` (`audio` plus `oneshot` /
+  `note` / `tempo`) and `defaultAmount` for the patch depth.
+
+Good starting bindings: **bass → `feedbackZoom`** (tunnel lunges on the
+low-end), **presence/high → `hueDrift`** (colour shimmers on hats),
+**peak → `trailPersistence`** (trails lengthen with energy).
 
 ## Reactions
 
 | Reaction | Args | What it does |
 |---|---|---|
 | `pulse` | `strength` 0–1 | Kicks the feedback on a transient (~450 ms decaying envelope): briefly pushes persistence toward "hold" and adds a zoom impulse, so the trail blooms and lunges forward on the beat, then settles back. Fire on a kick/snare. |
+| `reverse` | `mode` toggle / forward / reverse | Flips the feedback **rotation direction** live without changing `feedbackRotate`. `toggle` whips it the other way each fire (great on a snare); `forward`/`reverse` lock to a direction. |
 
 `trailPersistence` is the *continuous baseline* (modulate it for a swell);
 `pulse` is the *transient on top* — the same modulate-the-knob /
 fire-the-reaction split that `glitch` demonstrates, applied to feedback.
+`reverse` is a *latched direction toggle*: state that persists between fires,
+not a decaying envelope.
 
 ## Running it
 
@@ -83,6 +103,10 @@ left untrailed.
   persistence ~0.95.
 - **Acid spiral:** add `hueDrift` ~30°/s and `feedbackRotate` ~20°/s.
 - **Beat lunge:** baseline persistence ~0.85, bind `pulse` to a kick.
+- **Whiplash spiral:** spin hard with `feedbackRotate` ~60°/s, bind `reverse`
+  (toggle) to a snare so the tunnel snaps direction on the backbeat.
+- **Audio tunnel:** bind **bass → `feedbackZoom`** and **peak →
+  `trailPersistence`** so the tunnel breathes with the track.
 
 ## Performance
 

@@ -47,6 +47,16 @@ export const description =
 
 const MODES = ['rgb-split', 'slice', 'blocks'];
 
+// Cross-host audio-modulation marker. The harness reads `kind: 'audio'` (a
+// bare `modulation: true` is silently inert in its audio UI); midi-daddy reads
+// `sourceTypes` + `defaultAmount`; lfo/random let the platform's generators
+// drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
+
 export const params = {
   intensity: {
     type: 'number',
@@ -59,7 +69,7 @@ export const params = {
       'Baseline glitch amount, applied every frame. 0 = clean passthrough. ' +
       'Modulate this for a continuous swell; the `burst` reaction spikes ' +
       'on top of it.',
-    modulation: true
+    modulation: audioMod(0.5)
   },
   mode: {
     type: 'enum',
@@ -216,11 +226,14 @@ export default class GlitchFilter {
     this._isolate(this._channels.g, source, '#00ff00');
     this._isolate(this._channels.b, source, '#0000ff');
     ctx.clearRect(0, 0, w, h);
+    // save/restore so a throw mid-draw can't leak 'lighter' onto the shared
+    // output ctx (a manual reset wouldn't run if a drawImage threw).
+    ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.drawImage(this._channels.r, dx, 0, w, h);
     ctx.drawImage(this._channels.g, 0, 0, w, h);
     ctx.drawImage(this._channels.b, -dx, 0, w, h);
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
   }
 
   _isolate(canvas, source, channelColor) {

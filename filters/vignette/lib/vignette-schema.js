@@ -1,27 +1,24 @@
 /**
  * Vignette Parameter Schema
  *
- * Defines the 20 modulatable vignette parameters with the same shape
- * as program param schemas. Used by the ModulationEngine in
- * central-display.html and by ProgramEditor.js for the modulation UI.
+ * Defines the 20 modulatable vignette parameters in the layer-core filter
+ * param shape. Flat dot-notation keys (e.g. 'frame.blur') are used because
+ * modulation engines work with flat param names; the filter reconstructs the
+ * nested config the shader expects from these flat values.
  *
- * Flat dot-notation keys (e.g. 'frame.blur') are used because the
- * modulation engine works with flat param names. A reconstruction
- * function converts the flat modulated values back to the nested
- * structure that applyVignette() / setVignetteConfig() expects.
+ * Param grouping: each entry declares `paramGroup` so a contract-aware
+ * inspector renders Shape / Frame / Glass as three separately collapsible
+ * sections. The first entry in each group also declares `paramGroupLabel`
+ * (later entries in the same group merge from the first).
  *
- * Defaults here MUST match VIGNETTE_DEFAULTS in ProgramEditor.js.
- *
- * Param grouping: each entry declares `paramGroup` so a contract-
- * aware inspector renders Shape / Frame / Glass as three separately
- * collapsible sections. The first entry in each group also declares
- * `paramGroupLabel` (later entries in the same group merge from the
- * first). Convention formalized in visualization-layer-core v0.4.0
- * (PR #16) and mirrors midi-daddy's existing ParamForm.js consumer.
+ * Each modulatable param carries the cross-host audio marker (`kind: 'audio'`
+ * for the harness's audio UI; `sourceTypes` + `defaultAmount` for the
+ * platform; lfo/random for the platform's generators).
  */
 
 const MOD_ALL = {
-  sourceTypes: ['oneshot', 'note', 'audio', 'tempo']
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random']
 };
 
 export const vignetteSchema = {
@@ -50,7 +47,8 @@ export const vignetteSchema = {
     type: 'color', label: 'Frame Color',
     default: '#000000',
     modulation: {
-      sourceTypes: ['oneshot', 'note', 'audio', 'tempo'],
+      kind: 'audio',
+      sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
       colorMode: 'hueShift',
       colorModes: ['hueShift', 'rgbDelta'],
       defaultAmount: 30
@@ -99,7 +97,8 @@ export const vignetteSchema = {
     type: 'color', label: 'Glass Color',
     default: '#000000',
     modulation: {
-      sourceTypes: ['oneshot', 'note', 'audio', 'tempo'],
+      kind: 'audio',
+      sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
       colorMode: 'hueShift',
       colorModes: ['hueShift', 'rgbDelta'],
       defaultAmount: 30

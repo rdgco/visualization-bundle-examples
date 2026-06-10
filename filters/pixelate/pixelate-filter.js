@@ -42,6 +42,15 @@ export const description =
   'into big blocks on a hit and resolves as it decays. Cheaper than a ' +
   'full-resolution pass.';
 
+// Cross-host audio-modulation marker. Harness reads `kind: 'audio'`; midi-daddy
+// reads `sourceTypes` + `defaultAmount`; lfo/random let the platform's
+// generators drive the param. Each host ignores the other's keys.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo', 'lfo', 'random'],
+  defaultAmount
+});
+
 export const params = {
   blockSize: {
     type: 'number',
@@ -51,7 +60,7 @@ export const params = {
     description:
       'Edge length of one mosaic block, in output pixels. 1 = untouched; ' +
       'larger = chunkier blocks. Bind to peak/bass for a shatter-on-the-beat.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(8)
   },
   mix: {
     type: 'number',
@@ -61,7 +70,7 @@ export const params = {
     description:
       'Blend of the pixelated result over the original. 1 = fully ' +
       'pixelated; 0 = original source; in between crossfades sharp↔blocky.',
-    modulation: { kind: 'audio' }
+    modulation: audioMod(0.3)
   }
 };
 
@@ -72,9 +81,15 @@ export default class PixelateFilter {
     this._config = normalizeConfig(initialParams, DEFAULT_CONFIG);
 
     // Small offscreen canvas the source is shrunk into; resized lazily in
-    // render() when the working dimensions change.
-    this._small = document.createElement('canvas');
-    this._sctx = this._small.getContext('2d');
+    // render(). Guarded so the filter constructs headless (degrades to a
+    // passthrough) like every other filter in the bundle.
+    this._supported = typeof document !== 'undefined' && typeof document.createElement === 'function';
+    this._small = null;
+    this._sctx = null;
+    if (this._supported) {
+      this._small = document.createElement('canvas');
+      this._sctx = this._small.getContext('2d');
+    }
     this._sw = 0;
     this._sh = 0;
   }
@@ -87,6 +102,8 @@ export default class PixelateFilter {
   setConfig(p) { this._applyParams(p); }
   setModulatedValues(p) { this._applyParams(p); }
 
+  isActive() { return this._supported; }
+
   resize(width, height) {
     this._w = Math.max(1, width | 0);
     this._h = Math.max(1, height | 0);
@@ -94,11 +111,15 @@ export default class PixelateFilter {
 
   cleanup() {
     // Drop the offscreen canvas backing store.
-    this._small.width = this._small.height = 0;
+    if (this._small) this._small.width = this._small.height = 0;
   }
 
   // ── Contract: render ───────────────────────────────────────────────
   render(sourceCanvas, ctx) {
+    if (!this._supported) {
+      if (ctx && typeof ctx.drawImage === 'function') ctx.drawImage(sourceCanvas, 0, 0, this._w, this._h);
+      return;
+    }
     const { _w: w, _h: h } = this;
     const cfg = this._config;
 

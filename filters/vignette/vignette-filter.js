@@ -10,8 +10,7 @@
  * surface, samples the source canvas as a texture, then composites
  * the result back through the harness's filter-output 2D context.
  *
- * Migrated from midi-daddy's `apps/compositor/filters/vignette/` —
- * the schema + shader files are bundled alongside (`lib/`) so this
+ * The schema + shader files are bundled alongside (`lib/`) so this
  * filter is fully self-contained.
  */
 
@@ -21,7 +20,7 @@ import { VIGNETTE_VERT, VIGNETTE_FRAG } from './lib/vignette-shader.js';
 export const key = 'vignette';
 export const label = 'Vignette';
 export const type = 'filter';
-export const category = 'filters';
+export const category = 'demos';
 export const description = 'Elliptical vignette with independent frame/glass color, blur, brightness, contrast, and lens distortion';
 export const params = vignetteSchema;
 
@@ -78,6 +77,9 @@ function extractConfig(c) {
 // ============================================================================
 
 function createVignetteBridge(width, height) {
+  // Guard so the filter constructs headless (degrades to a passthrough) like
+  // every other filter in the bundle.
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
   const offscreen = document.createElement('canvas');
   offscreen.width = width;
   offscreen.height = height;
@@ -241,7 +243,11 @@ export default class VignetteFilter {
   }
 
   render(sourceCanvas, ctx) {
-    if (!this._bridge) return;
+    if (!this._bridge) {
+      // No WebGL (or headless) — pass the source through unchanged.
+      if (ctx && typeof ctx.drawImage === 'function') ctx.drawImage(sourceCanvas, 0, 0);
+      return;
+    }
 
     this._bridge.render(sourceCanvas);
 

@@ -29,6 +29,13 @@
  *   - `hueDrift` — psychedelic colour cycling of the trail
  *   - `pulse` reaction — kick the feedback (persistence + zoom impulse) on a
  *     beat; the single most "alive" use of this filter for music.
+ *   - `reverse` reaction — flip the spin direction live (the per-program
+ *     reverse-spin), without changing the rotation value.
+ *
+ * Every numeric attribute is audio-bindable: it carries a cross-host
+ * modulation marker so a host can drive it from a live audio level
+ * (peak / sub / bass / mid / high / presence). The filter stays audio-blind —
+ * the host senses and pushes resolved values in via `setModulatedValues()`.
  *
  * All time-varying quantities are normalised by real elapsed time so the look
  * is frame-rate independent (deg/sec, per-60fps-frame persistence, etc.).
@@ -48,11 +55,28 @@ export const description =
   'back in for ghost trails, motion echo, and infinite-tunnel zoom/rotate. ' +
   'The canonical multi-frame filter — proves a layer-core filter can hold a ' +
   'retained buffer across frames with no host change. `feedbackZoom`/`rotate` ' +
-  'warp the trail; `hueDrift` cycles its colour; the `pulse` reaction kicks ' +
-  'the feedback on a beat.';
+  'warp the trail; `hueDrift` cycles its colour. Every attribute is ' +
+  'audio-bindable; the `pulse` reaction kicks the feedback on a beat and ' +
+  '`reverse` flips the spin direction live.';
 
 const BLEND_MODES = ['screen', 'add', 'over'];
 const BLEND_INT = { add: 0, screen: 1, over: 2 };
+
+// Cross-host audio-modulation marker. Every numeric attribute carries one, so
+// each can be driven by a live audio level (peak / sub / bass / mid / high /
+// presence). The hosts read different keys off the same object and ignore the
+// rest (layer-core treats it as opaque):
+//   - visualization-harness reads `kind: 'audio'` to surface the per-param
+//     audio-binding dropdown and auto-wire it into its audio→patch rig.
+//   - midi-daddy reads `sourceTypes` (which input streams may bind) and
+//     `defaultAmount` (the default patch depth).
+// Filters never sample audio themselves — the host senses once and pushes the
+// resolved value in through `setModulatedValues()` each frame.
+const audioMod = defaultAmount => ({
+  kind: 'audio',
+  sourceTypes: ['audio', 'oneshot', 'note', 'tempo'],
+  defaultAmount
+});
 
 export const params = {
   // ── Trail ────────────────────────────────────────────────────────────
@@ -67,7 +91,7 @@ export const params = {
       'Fraction of the previous frame that survives into the next (per 60fps ' +
       'frame). 0 = no trail (passthrough); 0.99 = very long, slow-decaying ' +
       'trails. The core trail-length knob.',
-    modulation: true,
+    modulation: audioMod(0.3),
     paramGroup: 'trail',
     paramGroupLabel: 'Trail',
     paramGroupCollapsed: false
@@ -82,7 +106,7 @@ export const params = {
     description:
       'How strongly the current frame is injected on top of the trail. <1 ' +
       'lets the trail dominate; >1 over-drives bright sources into bloom.',
-    modulation: true,
+    modulation: audioMod(0.5),
     paramGroup: 'trail'
   },
   blend: {
@@ -109,7 +133,7 @@ export const params = {
       'Per-frame scale of the feedback. 1 = none. >1 grows the trail each ' +
       'frame (tunnel toward you); <1 shrinks it (tunnel away). Tiny values ' +
       '(1.01) read as a strong tunnel because the effect compounds.',
-    modulation: true,
+    modulation: audioMod(0.03),
     paramGroup: 'warp',
     paramGroupLabel: 'Warp',
     paramGroupCollapsed: false
@@ -118,13 +142,15 @@ export const params = {
     type: 'number',
     label: 'Feedback Rotate',
     default: 0,
-    min: -45,
-    max: 45,
-    step: 0.1,
+    min: -180,
+    max: 180,
+    step: 0.5,
     description:
-      'Rotation of the feedback in degrees/second. Spins the trail into a ' +
-      'spiral; pairs with zoom for a rotating tunnel.',
-    modulation: true,
+      'Rotation velocity of the feedback in degrees/second. Signed: negative ' +
+      'spins one way, positive the other. Spins the trail into a spiral; ' +
+      'pairs with zoom for a rotating tunnel. The `reverse` reaction flips ' +
+      'this direction live without changing the value.',
+    modulation: audioMod(30),
     paramGroup: 'warp'
   },
   feedbackShiftX: {
@@ -135,7 +161,7 @@ export const params = {
     max: 0.05,
     step: 0.001,
     description: 'Per-frame horizontal drift of the feedback (fraction of width).',
-    modulation: true,
+    modulation: audioMod(0.02),
     paramGroup: 'warp'
   },
   feedbackShiftY: {
@@ -146,7 +172,7 @@ export const params = {
     max: 0.05,
     step: 0.001,
     description: 'Per-frame vertical drift of the feedback (fraction of height).',
-    modulation: true,
+    modulation: audioMod(0.02),
     paramGroup: 'warp'
   },
 
@@ -162,7 +188,7 @@ export const params = {
       'Hue rotation of the trail in degrees/second. Because it compounds over ' +
       'the retained frames, even a few deg/sec cycles the trail through the ' +
       'full spectrum — the psychedelic colour-smear.',
-    modulation: true,
+    modulation: audioMod(60),
     paramGroup: 'color',
     paramGroupLabel: 'Colour',
     paramGroupCollapsed: false
@@ -185,6 +211,24 @@ export const reactions = {
         max: 1,
         step: 0.01,
         description: 'Scales the persistence boost and zoom impulse the pulse adds.'
+      }
+    }
+  },
+  reverse: {
+    label: 'Reverse spin',
+    description:
+      'Flip the feedback rotation direction live, without touching the ' +
+      '`feedbackRotate` value. Fire it on a beat to whip the tunnel the other ' +
+      'way. `mode` toggles by default, or forces a direction.',
+    args: {
+      mode: {
+        type: 'enum',
+        label: 'Direction',
+        options: ['toggle', 'forward', 'reverse'],
+        default: 'toggle',
+        description:
+          'toggle = flip whichever way it is spinning; forward = lock to the ' +
+          'sign of feedbackRotate; reverse = lock to the opposite sign.'
       }
     }
   }
@@ -411,6 +455,7 @@ export default class FeedbackFilter {
     this._blend = BLEND_INT.screen;
     this._zoom = 1;                 // per-60fps-frame scale
     this._rotateRadPerSec = 0;
+    this._spinSign = 1;             // flipped live by the `reverse` reaction
     this._shiftXPerFrame = 0;       // per-60fps-frame
     this._shiftYPerFrame = 0;
     this._hueRadPerSec = 0;
@@ -482,6 +527,13 @@ export default class FeedbackFilter {
       this._pulseUntil = (typeof performance !== 'undefined' ? performance.now() : 0) + PULSE_MS;
       return;
     }
+    if (key === 'reverse') {
+      const mode = typeof args.mode === 'string' ? args.mode : 'toggle';
+      if (mode === 'forward') this._spinSign = 1;
+      else if (mode === 'reverse') this._spinSign = -1;
+      else this._spinSign = -this._spinSign;
+      return;
+    }
     throw new Error(`feedback: unknown reaction '${key}'`);
   }
 
@@ -525,7 +577,7 @@ export default class FeedbackFilter {
       sourceGain: this._sourceGain,
       blend: this._blend,
       zoom: 1 + (zoomBase - 1) * dtScale,
-      rotate: this._rotateRadPerSec * dt,
+      rotate: this._rotateRadPerSec * this._spinSign * dt,
       shiftX: this._shiftXPerFrame * dtScale,
       shiftY: this._shiftYPerFrame * dtScale,
       hue: this._hueRadPerSec * dt

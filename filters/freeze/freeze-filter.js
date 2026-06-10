@@ -20,14 +20,12 @@
  *     `wet`) until `release`. The performance / freeze-on-a-hit mode.
  *   - stutter — auto: re-grab every `holdTime` ms and hold, so motion judders
  *     forward in chunks. Bind `holdTime` to tempo for beat-synced stutter.
- *   - slice   — like stutter, but only a random subset of bands freeze each
- *     window (the rest stay live) — a torn, datamosh look.
  *
  * `dry` (live) and `wet` (frozen) are tuned independently, so you can crossfade
  * the original against the freeze any way you like. After each capture the
  * frozen frame fades away per `fade` (off / smooth / flicker / dissolve) over
  * `fadeTime` — fading or flickering into an ethereal absence. (Manual mode
- * fades over the full fadeTime; auto modes cap it to the hold window.)
+ * fades over the full fadeTime; stutter caps it to the hold window.)
  *
  * Timing is wall-clock (`performance.now()`), so the stutter rate is
  * frame-rate independent.
@@ -42,13 +40,11 @@ export const description =
   'temporal complement to `feedback` and `echo` (it removes motion instead of ' +
   'adding history). manual mode freezes on a `capture` reaction until ' +
   '`release`; stutter mode re-grabs every `holdTime` ms (bind to tempo) for a ' +
-  'beat-synced judder; slice mode freezes a random subset of bands for a torn ' +
-  'datamosh look. Independent `dry`/`wet` opacities crossfade live against the ' +
-  'freeze, and `fade` (smooth / flicker / dissolve) lets the frozen frame fade ' +
-  'away over `fadeTime` after freezing. Introduces the capture/grab reaction shape.';
+  'beat-synced judder. Independent `dry`/`wet` opacities crossfade live against ' +
+  'the freeze, and `fade` (smooth / flicker / dissolve) lets the frozen frame ' +
+  'fade away over `fadeTime` after freezing. Introduces the capture/grab reaction shape.';
 
-const MODES = ['manual', 'stutter', 'slice'];
-const AXES = ['horizontal', 'vertical'];
+const MODES = ['manual', 'stutter'];
 const FADE_MODES = ['off', 'smooth', 'flicker', 'dissolve'];
 const MAX_DISSOLVE_BLUR = 24; // px the dissolve fade blurs to as it leaves
 
@@ -70,8 +66,7 @@ export const params = {
     description:
       'manual = live until you fire `capture`, then hold until `release` ' +
       '(freeze-on-a-hit). stutter = auto re-grab every `holdTime` ms (motion ' +
-      'judders forward; bind holdTime to tempo). slice = stutter, but only a ' +
-      'random subset of bands freeze each window (torn / datamosh).',
+      'judders forward; bind holdTime to tempo).',
     paramGroup: 'freeze',
     paramGroupLabel: 'Freeze',
     paramGroupCollapsed: false
@@ -84,8 +79,8 @@ export const params = {
     max: 2000,
     step: 1,
     description:
-      'stutter / slice: how long each captured frame is held before re-grabbing, ' +
-      'in milliseconds. Short = fast judder; long = slow chunky freeze. Bind to ' +
+      'stutter: how long each captured frame is held before re-grabbing, in ' +
+      'milliseconds. Short = fast judder; long = slow chunky freeze. Bind to ' +
       'tempo for beat-locked stutter.',
     modulation: audioMod(80),
     paramGroup: 'freeze'
@@ -132,8 +127,8 @@ export const params = {
       'hard freeze); smooth = fades to absence over `fadeTime`; flicker = ' +
       'blinks out, increasingly off as it goes; dissolve = blurs and fades ' +
       'into an ethereal cloud. In manual mode the fade runs over the full ' +
-      '`fadeTime` after you capture; in stutter / slice it is capped to the ' +
-      'hold window so every held frame fully fades before the next grab.',
+      '`fadeTime` after you capture; in stutter it is capped to the hold ' +
+      'window so every held frame fully fades before the next grab.',
     paramGroup: 'fade',
     paramGroupLabel: 'Fade',
     paramGroupCollapsed: false
@@ -148,8 +143,8 @@ export const params = {
     description:
       'How long the frozen frame takes to fade away after a freeze, in ' +
       'milliseconds (ignored when fade = off). In manual mode this is the full ' +
-      'fade duration; in stutter / slice it is capped to `holdTime` so the ' +
-      'fade always completes within each window.',
+      'fade duration; in stutter it is capped to `holdTime` so the fade ' +
+      'always completes within each window.',
     modulation: audioMod(400),
     paramGroup: 'fade'
   },
@@ -165,43 +160,6 @@ export const params = {
       '= a faster strobe-out.',
     modulation: audioMod(6),
     paramGroup: 'fade'
-  },
-
-  // ── Slice ──────────────────────────────────────────────────────────────
-  sliceCount: {
-    type: 'number',
-    label: 'Slice Count',
-    default: 8,
-    min: 2,
-    max: 32,
-    step: 1,
-    description:
-      'slice mode: how many bands to divide the frame into. More = finer ' +
-      'tearing. Structural — not modulated.',
-    paramGroup: 'slice',
-    paramGroupLabel: 'Slice',
-    paramGroupCollapsed: true
-  },
-  sliceAmount: {
-    type: 'number',
-    label: 'Slice Amount',
-    default: 0.5,
-    min: 0,
-    max: 1,
-    step: 0.01,
-    description:
-      'slice mode: fraction of bands that freeze each window (the rest stay ' +
-      'live). 0 = all live; 1 = all frozen (= stutter). The torn-ness knob.',
-    modulation: audioMod(0.4),
-    paramGroup: 'slice'
-  },
-  sliceAxis: {
-    type: 'enum',
-    label: 'Slice Axis',
-    options: AXES,
-    default: 'horizontal',
-    description: 'slice mode: band orientation — horizontal rows or vertical columns.',
-    paramGroup: 'slice'
   }
 };
 
@@ -210,15 +168,15 @@ export const reactions = {
     label: 'Capture',
     description:
       'Grab the current frame and hold it. In manual mode this freezes the ' +
-      'screen until `release`; in stutter / slice it re-syncs the window to ' +
-      'now (re-grab on the beat). The snapshot-grab reaction.',
+      'screen until `release`; in stutter it re-syncs the window to now ' +
+      '(re-grab on the beat). The snapshot-grab reaction.',
     args: {}
   },
   release: {
     label: 'Release',
     description:
-      'Resume live in manual mode (unfreeze). No-op in the auto modes, which ' +
-      'keep stuttering. State-reset shape, paired with `capture`.',
+      'Resume live in manual mode (unfreeze). No-op in stutter, which keeps ' +
+      're-grabbing. State-reset shape, paired with `capture`.',
     args: {}
   }
 };
@@ -241,9 +199,6 @@ export default class FreezeFilter {
     this._fade = 'smooth';
     this._fadeTime = 1000;
     this._flickerRate = 12;
-    this._sliceCount = 8;
-    this._sliceAmount = 0.5;
-    this._sliceAxis = 'horizontal';
 
     // Flicker-fade gate.
     this._flickerOn = true;
@@ -254,7 +209,6 @@ export default class FreezeFilter {
     this._captureRequested = false;
     this._holdStart = -Infinity; // wall-clock of the current window's grab
     this._hasHeld = false;       // a frame has been captured at least once
-    this._frozenBands = [];      // slice mode: which bands are frozen this window
 
     this._supported = typeof document !== 'undefined' && typeof document.createElement === 'function';
     this._held = null;
@@ -272,9 +226,6 @@ export default class FreezeFilter {
     if (typeof p.fade === 'string' && FADE_MODES.includes(p.fade)) this._fade = p.fade;
     if (typeof p.fadeTime === 'number' && Number.isFinite(p.fadeTime)) this._fadeTime = clamp(p.fadeTime, 50, 5000);
     if (typeof p.flickerRate === 'number' && Number.isFinite(p.flickerRate)) this._flickerRate = clamp(p.flickerRate, 1, 30);
-    if (typeof p.sliceCount === 'number' && Number.isFinite(p.sliceCount)) this._sliceCount = clamp(Math.round(p.sliceCount), 2, 32);
-    if (typeof p.sliceAmount === 'number' && Number.isFinite(p.sliceAmount)) this._sliceAmount = clamp(p.sliceAmount, 0, 1);
-    if (typeof p.sliceAxis === 'string' && AXES.includes(p.sliceAxis)) this._sliceAxis = p.sliceAxis;
   }
 
   // ── Contract: live-update aliases + lifecycle ──────────────────────────
@@ -315,18 +266,17 @@ export default class FreezeFilter {
   // True when an auto mode's current window has elapsed and it's time to grab
   // a fresh frame.
   _dueForCapture(now) {
-    if (this._mode !== 'stutter' && this._mode !== 'slice') return false;
+    if (this._mode !== 'stutter') return false;
     return now - this._holdStart >= this._holdTime;
   }
 
   // Fade progress 0..1 since the last capture (0 = just grabbed / fade off,
-  // 1 = fully departed). Manual mode fades over the full `fadeTime`; auto modes
-  // cap the fade to the hold window so it always completes before the next grab
-  // (otherwise the re-grab masks it — the long-fadeTime-in-stutter trap).
+  // 1 = fully departed). Manual mode fades over the full `fadeTime`; stutter
+  // caps the fade to the hold window so it always completes before the next
+  // grab (otherwise the re-grab masks it — the long-fadeTime-in-stutter trap).
   _fadeProgress(elapsed) {
     if (this._fade === 'off' || this._fadeTime <= 0) return 0;
-    const auto = this._mode === 'stutter' || this._mode === 'slice';
-    const dur = auto ? Math.min(this._fadeTime, this._holdTime) : this._fadeTime;
+    const dur = this._mode === 'stutter' ? Math.min(this._fadeTime, this._holdTime) : this._fadeTime;
     if (dur <= 0) return 0;
     return clamp(elapsed / dur, 0, 1);
   }
@@ -338,32 +288,6 @@ export default class FreezeFilter {
     this._held.height = this._h;
     this._heldCtx = this._held.getContext('2d');
     this._hasHeld = false;
-  }
-
-  // slice mode: re-roll which bands freeze this window (per-band probability =
-  // sliceAmount). Uses Math.random — visual, not asserted in tests.
-  _rollBands() {
-    const n = this._sliceCount;
-    const bands = new Array(n);
-    for (let i = 0; i < n; i++) bands[i] = Math.random() < this._sliceAmount;
-    this._frozenBands = bands;
-  }
-
-  _drawFrozenBands(ctx) {
-    const n = this._frozenBands.length;
-    const horiz = this._sliceAxis === 'horizontal';
-    for (let i = 0; i < n; i++) {
-      if (!this._frozenBands[i]) continue;
-      if (horiz) {
-        const y0 = Math.round((i * this._h) / n);
-        const y1 = Math.round(((i + 1) * this._h) / n);
-        ctx.drawImage(this._held, 0, y0, this._w, y1 - y0, 0, y0, this._w, y1 - y0);
-      } else {
-        const x0 = Math.round((i * this._w) / n);
-        const x1 = Math.round(((i + 1) * this._w) / n);
-        ctx.drawImage(this._held, x0, 0, x1 - x0, this._h, x0, 0, x1 - x0, this._h);
-      }
-    }
   }
 
   // ── Contract: render ─────────────────────────────────────────────────────
@@ -387,7 +311,6 @@ export default class FreezeFilter {
       this._holdStart = now;
       this._hasHeld = true;
       this._flickerOn = true; // fresh capture starts visible
-      if (this._mode === 'slice') this._rollBands();
     }
 
     // Live (dry) base — 'copy' so `dry` actually attenuates the original
@@ -423,11 +346,7 @@ export default class FreezeFilter {
     if (this._fade === 'dissolve' && p > 0) {
       ctx.filter = `blur(${(p * MAX_DISSOLVE_BLUR).toFixed(2)}px)`;
     }
-    if (this._mode === 'slice') {
-      this._drawFrozenBands(ctx);
-    } else {
-      ctx.drawImage(this._held, 0, 0, this._w, this._h);
-    }
+    ctx.drawImage(this._held, 0, 0, this._w, this._h);
     ctx.restore();
   }
 }

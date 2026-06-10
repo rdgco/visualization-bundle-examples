@@ -42,15 +42,18 @@ Timing is wall-clock, so the stutter rate is frame-rate independent.
 | `dry` | 0–1 | Opacity of the live / original — **always active, every mode**. Fade it to dissolve the original while the freeze holds. The reliable audio target. *audio-bindable* |
 | `wet` | 0–1 | Opacity of the frozen frame where it shows. Tuned independently of `dry`, so you can crossfade live against frozen. *audio-bindable* |
 
-### Sublimation — how the frozen frame leaves
+### Fade — how the frozen frame leaves after a freeze
 
-After each capture the frozen frame departs over `fadeTime` (measured from the
-grab, so in stutter/slice every held frame breathes out within its window).
+After each freeze the frozen frame fades away. In **manual** mode it fades over
+the full `fadeTime` after you `capture` (freeze, then it dissolves back to
+live). In **stutter / slice** the fade is **capped to the hold window** so each
+held frame fully fades before the next grab — otherwise a long `fadeTime`
+re-grabs before fading and you'd see no fade at all.
 
 | Param | Range | What it does |
 |---|---|---|
-| `sublimation` | hold / fade / flicker / dissolve | hold = stays (no fade); fade = smoothly to absence; flicker = blinks out, increasingly off; dissolve = blurs + fades into an ethereal cloud. |
-| `fadeTime` | 50–5000 ms | How long the departure takes (ignored for `hold`). Shorter than `holdTime` in stutter = the freeze vanishes before the next grab (strobe gaps). *audio-bindable* |
+| `fade` | off / smooth / flicker / dissolve | off = stays (hard freeze); smooth = fades to absence; flicker = blinks out, increasingly off; dissolve = blurs + fades into an ethereal cloud. **Default smooth.** |
+| `fadeTime` | 50–5000 ms | How long the fade takes after a freeze (ignored for `off`). Full duration in manual; capped to `holdTime` in stutter / slice. *audio-bindable* |
 | `flickerRate` | 1–30 Hz | flicker mode: how fast it blinks as it goes. *audio-bindable* |
 
 ### Slice (slice mode only)
@@ -108,14 +111,14 @@ Stack `freeze` as a filter **above** moving content (`vibrations`, `skyline`):
 - **Freeze on the hit:** `mode` manual, `capture` → snare, `release` → downbeat.
 - **Ghost freeze:** `mode` manual, `wet` ~0.5 — the frozen frame hangs as a
   ghost while live motion plays through it.
-- **Sublimating freeze:** `mode` manual, `capture` on a hit, `sublimation`
-  fade, `fadeTime` ~1500 — the frame freezes then melts to absence.
-- **Flicker-out:** `sublimation` flicker, `flickerRate` ~16 — the freeze
-  strobes away into nothing.
-- **Ethereal dissolve:** `sublimation` dissolve — the frozen frame blurs into a
-  soft cloud as it fades. Pair with `dry` < 1 to thin the live too.
-- **Breathing stutter:** `mode` stutter, `sublimation` fade, `fadeTime` ≈
-  `holdTime` — each held frame fades out just as the next is grabbed.
+- **Freeze-and-fade:** `mode` manual, `capture` on a hit, `fade` smooth,
+  `fadeTime` ~1500 — the frame freezes then melts to absence over 1.5 s.
+- **Flicker-out:** `fade` flicker, `flickerRate` ~16 — the freeze strobes away
+  into nothing.
+- **Ethereal dissolve:** `fade` dissolve — the frozen frame blurs into a soft
+  cloud as it fades. Pair with `dry` < 1 to thin the live too.
+- **Breathing stutter:** `mode` stutter, `fade` smooth — each held frame fades
+  out within its window before the next is grabbed (the default look).
 - **Datamosh tear:** `mode` slice, `sliceCount` ~16, bind `sliceAmount` to peak
   so the tearing surges on transients.
 

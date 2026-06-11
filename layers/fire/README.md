@@ -41,18 +41,21 @@ npm start
 
 | Param | Behaviour |
 |---|---|
-| `intensity` | Base heat seeded at the bottom each frame. Audio peak adds up to +0.4. High values sustain tall flames during silence; 0 lets audio alone drive the height. |
-| `cooling` | Maximum heat decay per grid step. Low (0.01–0.05) = tall, sustained column. High (0.3–0.5) = short embers that barely leave the base. |
-| `turbulence` | Maximum horizontal cell drift per step. 0 = perfectly vertical column. 4 = wide chaotic spread. Bass adds up to +2 on top of this. |
+| `intensity` | Base heat seeded at the bottom each frame. Audio peak adds up to +0.4. High values sustain tall flames during silence; 0 lets audio alone drive the brightness. |
+| `height` | How far flames reach up the canvas. Mapped exponentially so the control feels linear to the eye. 0 = short embers near the base. 1 = flames fill the full canvas height. |
+| `turbulence` | Maximum horizontal cell drift per step. 0 = upright column. 4 = wide chaotic spread. Bass adds up to +2 on top of this. |
+| `spread` | Gap structure at the seed base. 0 = solid wall of fire. Higher values carve the base into distinct columns separated by dark gaps; the number of columns increases with spread and the pattern drifts slowly over time. |
 | `scale` | Canvas pixels per grid cell. 1 = full resolution (expensive). 4 = default sweet spot. 6–8 = deliberately chunky, retro look at very low CPU cost. |
 | `backgroundColor` | Painted under the flame every frame. Dark backgrounds maximise the additive screen-blend glow; lighter backgrounds reduce contrast and saturation. |
 
 ## Reaction
 
-**flare** — immediately raises the seeded heat to `intensity` (default 1.0)
-for `durationMs` (default 300 ms), then returns to the base `intensity`
-param. Accepts `oneshot` and `drum-chord` events. Useful for kicks, snare
-hits, or any hard transient.
+**flare** — instantly floods the entire grid with heat so the burst is
+visible in the same frame the reaction fires (full-screen fire), then the
+natural cooling settles it back to normal over the following seconds. Also
+sustains high seed intensity for `durationMs` (default 400 ms). Accepts
+`oneshot` and `drum-chord` events. Useful for kicks, drops, or any moment
+that should engulf the screen.
 
 ## File layout
 

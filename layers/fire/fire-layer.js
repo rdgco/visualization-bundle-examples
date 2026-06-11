@@ -10,13 +10,13 @@
  * blending for a natural additive glow.
  *
  * Audio inputs:
- *   peak  → boosts effective intensity (taller, hotter flames)
+ *   peak  → boosts effective intensity (brighter, hotter base)
  *   bass  → adds to turbulence (wider, wilder spread)
  */
 
 export const key = 'fire';
 export const label = 'Fire';
-export const description = 'Cellular-automaton flame simulation using the classic Doom-fire algorithm. A heat grid propagates upward with random cooling and horizontal drift; a palette LUT maps heat to colour. Four palettes: fire, plasma, ice, toxic. Flames are naturally transparent at the tips via alpha-mapped heat. Audio peak drives height; bass drives turbulence. A flare reaction surges the flame to full intensity.';
+export const description = 'Cellular-automaton flame simulation using the classic Doom-fire algorithm. A heat grid propagates upward with random cooling and horizontal drift; a palette LUT maps heat to colour. Four palettes: fire, plasma, ice, toxic. Height controls how far flames reach; spread carves distinct columns with gaps between them. Flames are naturally transparent at the tips via alpha-mapped heat. Audio peak drives intensity; bass drives turbulence. Flare reaction floods the entire grid for an instant full-screen burst.';
 
 const PALETTES = ['fire', 'plasma', 'ice', 'toxic'];
 
@@ -28,17 +28,18 @@ export const params = {
     min: 0,
     max: 1,
     step: 0.01,
-    description: 'Base flame height. Audio peak adds on top of this; high values sustain tall flames during silence.',
+    description: 'Base heat seeded at the bottom each frame. Audio peak adds up to +0.4 on top.',
     modulation: { kind: 'audio' }
   },
-  cooling: {
+  height: {
     type: 'number',
-    label: 'Cooling',
-    default: 0.1,
-    min: 0.01,
-    max: 0.5,
+    label: 'Height',
+    default: 0.75,
+    min: 0,
+    max: 1,
     step: 0.01,
-    description: 'Rate at which heat dissipates as it rises. Low = tall, sustained flames. High = short, fast-flickering flames.'
+    description: 'How high flames reach. 0 = short embers near the base. 1 = flames fill the full canvas.',
+    modulation: { kind: 'continuous' }
   },
   turbulence: {
     type: 'number',
@@ -47,7 +48,17 @@ export const params = {
     min: 0,
     max: 4,
     step: 0.1,
-    description: 'Horizontal drift applied to each spreading cell. 0 = upright column. Higher = wide, writhing chaos.',
+    description: 'Horizontal drift applied to each spreading cell. 0 = upright column. Higher = wide, writhing chaos. Bass adds up to +2.',
+    modulation: { kind: 'continuous' }
+  },
+  spread: {
+    type: 'number',
+    label: 'Spread',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Gap structure at the flame base. 0 = solid wall of fire. Higher = distinct columns separated by dark gaps. The pattern drifts slowly over time.',
     modulation: { kind: 'continuous' }
   },
   palette: {
@@ -82,7 +93,7 @@ export const params = {
 export const reactions = {
   flare: {
     label: 'Flare',
-    description: 'Surge the flame to maximum intensity for a brief burst, then ease back to the base intensity.',
+    description: 'Instantly floods the entire grid with heat for a full-screen burst, then lets the natural cooling settle it back down. Also sustains high seed intensity for durationMs.',
     accepts: ['oneshot', 'drum-chord'],
     args: {
       durationMs: {
@@ -90,9 +101,9 @@ export const reactions = {
         label: 'Duration (ms)',
         min: 50,
         max: 2000,
-        default: 300,
+        default: 400,
         step: 10,
-        description: 'How long the flare holds before fading back to normal.'
+        description: 'How long the boosted seed intensity holds after the initial burst.'
       },
       intensity: {
         type: 'number',
@@ -101,7 +112,7 @@ export const reactions = {
         max: 1,
         default: 1,
         step: 0.01,
-        description: 'Peak intensity of the flare burst. 1 = full heat.'
+        description: 'Heat level of the burst. 1 = full white-hot. Lower = partial surge.'
       }
     }
   }
@@ -182,6 +193,7 @@ export default class FireLayer {
     this._imgData = null;
     this._lut = buildPalette('fire');
     this._activePalette = 'fire';
+    this._time = 0;
     this._flareUntil = 0;
     this._flareIntensity = 1;
   }
@@ -190,6 +202,9 @@ export default class FireLayer {
     const c = ctx.ctx2d;
     const canvas = ctx.canvas;
     const now = performance.now();
+    // Clamp dt — a backgrounded tab can produce huge spikes on resume.
+    const safeDt = Math.max(1, Math.min(100, dt || 16.67));
+    this._time += safeDt;
 
     const w = canvas.width;
     const h = canvas.height;
@@ -216,7 +231,7 @@ export default class FireLayer {
     const effectiveIntensity = Math.min(1, baseIntensity + peak * 0.4);
     const effectiveTurbulence = Math.min(4, params.turbulence + bass * 2);
 
-    this._step(effectiveIntensity, params.cooling, effectiveTurbulence);
+    this._step(effectiveIntensity, params.height, effectiveTurbulence, params.spread);
     this._paint(c, w, h);
   }
 
@@ -234,18 +249,19 @@ export default class FireLayer {
     this._imgData = this._offCtx.createImageData(gW, gH - 1);
   }
 
-  _step(intensity, cooling, turbulence) {
+  _step(intensity, height, turbulence, spread) {
     const gW = this._gW;
     const gH = this._gH;
     const grid = this._grid;
 
-    // maxDecay: how much heat can be subtracted per cell per step.
-    // cooling 0.01 → maxDecay 1 (tall flames), cooling 0.5 → maxDecay 25 (embers).
-    const maxDecay = Math.max(1, Math.round(cooling * 50));
+    // Map height (0–1) to maxDecay via an exponential curve so the control
+    // feels linear to the eye. height=1 → maxDecay=1 (flames reach the top);
+    // height=0 → maxDecay=50 (embers that barely leave the base).
+    const maxDecay = Math.max(1, Math.round(Math.pow(50, 1 - height)));
     const turbRange = Math.max(0, Math.round(turbulence));
 
     // Propagate: for each non-seed row, pull heat upward from the row below.
-    // Reads from row y+1 (always unmodified this frame since we iterate top→bottom)
+    // Reads from row y+1 (always unmodified this frame — we iterate top→bottom)
     // and writes to row y at a horizontally drifted column.
     for (let y = 0; y < gH - 1; y++) {
       for (let x = 0; x < gW; x++) {
@@ -259,13 +275,36 @@ export default class FireLayer {
       }
     }
 
-    // Seed the bottom two rows with heat. Two rows avoids a cold gap at the
-    // base when turbulence drifts cells away from their column.
+    // Seed the bottom two rows. Two rows avoids a cold gap at the base when
+    // turbulence drifts cells away from their column.
     const heatBase = intensity * 255;
     const seed1 = (gH - 1) * gW;
     const seed2 = (gH - 2) * gW;
+
+    // Spread: a slowly-drifting sine wave modulates how much of the base is
+    // lit. At spread=0 the mask is 1 everywhere (solid fire). At spread=1
+    // the mask reaches zero in the troughs, creating distinct columns with
+    // true dark gaps between them. The number of columns grows with spread.
+    const spreadAmt = Math.max(0, Math.min(1, spread));
+    // 1 cycle at low spread (wide flame bodies), up to 6 at high spread
+    // (many narrow columns). Drive this from time so the pattern drifts.
+    const spreadCycles = 1 + Math.round(spreadAmt * 5);
+    const timePhase = this._time * 0.0004; // ~one drift cycle per ~2500 frames
+
     for (let x = 0; x < gW; x++) {
-      const heat = Math.max(0, Math.min(255, Math.round(heatBase + (Math.random() * 40 - 20))));
+      let seedHeat = heatBase;
+      if (spreadAmt > 0) {
+        const spatialPhase = (x / gW) * Math.PI * 2 * spreadCycles + timePhase;
+        const sineVal = (Math.sin(spatialPhase) + 1) / 2; // 0..1
+        // threshold rises with spread: 0 → all lit, 0.6 → only sine peaks lit
+        const threshold = spreadAmt * 0.6;
+        const mask = sineVal > threshold
+          ? (sineVal - threshold) / (1 - threshold) // smooth ramp 0→1 above threshold
+          : 0;
+        // Blend: spread=0 → seedHeat unchanged; spread=1 → seedHeat = heatBase * mask
+        seedHeat = heatBase * (1 - spreadAmt + spreadAmt * mask);
+      }
+      const heat = Math.max(0, Math.min(255, Math.round(seedHeat + (Math.random() * 40 - 20))));
       grid[seed1 + x] = heat;
       grid[seed2 + x] = heat;
     }
@@ -304,10 +343,23 @@ export default class FireLayer {
   react(reactionKey, args, _eventContext) {
     const a = args || {};
     if (reactionKey === 'flare') {
-      const dur = typeof a.durationMs === 'number' ? a.durationMs : 300;
+      const dur = typeof a.durationMs === 'number' ? a.durationMs : 400;
       const intensity = typeof a.intensity === 'number' ? a.intensity : 1;
+      const clampedIntensity = Math.max(0, Math.min(1, intensity));
+
+      // Flood the entire grid immediately so the burst is visible in the
+      // same frame the reaction fires, not just at the seed rows. The natural
+      // cooling propagates downward from the top over the following seconds,
+      // creating a settling-back-to-normal effect.
+      if (this._grid) {
+        const heat = Math.round(255 * clampedIntensity);
+        for (let i = 0; i < this._grid.length; i++) {
+          if (this._grid[i] < heat) this._grid[i] = heat;
+        }
+      }
+
       this._flareUntil = performance.now() + dur;
-      this._flareIntensity = Math.max(0, Math.min(1, intensity));
+      this._flareIntensity = clampedIntensity;
       return;
     }
     console.warn(`[fire] Unknown reaction '${reactionKey}'; declared: flare`);
@@ -320,6 +372,7 @@ export default class FireLayer {
     this._offscreen = null;
     this._offCtx = null;
     this._imgData = null;
+    this._time = 0;
     this._flareUntil = 0;
   }
 }

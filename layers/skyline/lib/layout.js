@@ -54,7 +54,6 @@ const FOOTPRINT_WEIGHTS = { bevel: 0.50, chop: 0.30, ell: 0.14, cylinder: 0.06 }
 /**
  * Choose a footprint descriptor for one building.
  *
- * @param {() => number} rng
  * @param {{variety?:number, allowEll?:boolean, allowCylinder?:boolean}} opts
  *   variety — probability (0..1) that a building is non-box.
  * @returns {{type:string}} descriptor consumed by buildFootprintPolygon

@@ -12,7 +12,10 @@ Strip noise comments from all source files. One PR: `feature/compress-comments`.
 - `// Ignore errors` on a bare `catch` block
 - `// CASCADE will handle related tables` and similar SQL-obvious observations
 
+
+
 **Keep (load-bearing):**
+- These are examples for humans to read therefore some degree of summarization may be useful 
 - WHY comments: hidden constraints, past bugs, non-obvious invariants, shader math explanations
 - WebGL/GLSL constant rationale, blend mode notes, rendering technique explanations
 - Any comment referencing a specific bug, task, or EPIC by name

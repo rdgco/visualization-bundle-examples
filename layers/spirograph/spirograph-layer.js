@@ -319,6 +319,19 @@ export default class SpirographLayer {
     }
 
     c.globalAlpha = 1;
+
+    // The partial-alpha background fills above leave background regions
+    // semi-transparent until many frames have accumulated. Downstream
+    // composite filters that sample pixels (lens distortion, glass opaqueness)
+    // need a fully opaque canvas to work correctly. destination-over fills
+    // any remaining transparent pixels with the background colour without
+    // touching the already-drawn opaque content.
+    c.save();
+    c.globalCompositeOperation = 'destination-over';
+    c.fillStyle = params.backgroundColor;
+    c.fillRect(0, 0, cx * 2, cy * 2);
+    c.restore();
+
     this._t += dtT;
     // Prevent float precision drift without visual discontinuity.
     if (this._t > period * 1000) this._t -= period * 1000;

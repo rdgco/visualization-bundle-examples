@@ -185,9 +185,6 @@ export default class SpirographLayer {
     this._prevY = null;
     this._clearPending = false;
     this._clearColor = null;
-    this._lastCanvas = null;
-    this._lastW = 0;
-    this._lastH = 0;
   }
 
   render(ctx, params, dt) {
@@ -200,23 +197,6 @@ export default class SpirographLayer {
     const cx = w / 2;
     const cy = h / 2;
     const R = Math.min(w, h) * 0.44;
-
-    // On the first frame and whenever the canvas changes (host swap or resize),
-    // stamp a fully-opaque background fill. Once the canvas is opaque, the
-    // trail-fade fills (source-over at low globalAlpha on alpha=1 pixels)
-    // keep every pixel at alpha=1 naturally — no per-frame compositing tricks
-    // needed. This ensures pixel-sampling downstream filters (lens distortion,
-    // glass opaqueness) always see a fully-opaque canvas.
-    if (canvas !== this._lastCanvas || w !== this._lastW || h !== this._lastH) {
-      c.globalAlpha = 1;
-      c.fillStyle = params.backgroundColor;
-      c.fillRect(0, 0, w, h);
-      this._lastCanvas = canvas;
-      this._lastW = w;
-      this._lastH = h;
-      this._prevX = null;
-      this._prevY = null;
-    }
 
     const isEpi = params.mode === 'epi';
     const r = R * Math.max(0.01, params.innerRatio);
@@ -339,7 +319,6 @@ export default class SpirographLayer {
     }
 
     c.globalAlpha = 1;
-
     this._t += dtT;
     // Prevent float precision drift without visual discontinuity.
     if (this._t > period * 1000) this._t -= period * 1000;
@@ -363,8 +342,5 @@ export default class SpirographLayer {
     this._prevY = null;
     this._clearPending = false;
     this._clearColor = null;
-    this._lastCanvas = null;
-    this._lastW = 0;
-    this._lastH = 0;
   }
 }

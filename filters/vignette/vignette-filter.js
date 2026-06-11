@@ -149,7 +149,6 @@ function createVignetteBridge(width, height) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-  // Current config
   let cfg = null;
 
   return {
@@ -178,12 +177,10 @@ function createVignetteBridge(width, height) {
       gl.disable(gl.CULL_FACE);
       gl.useProgram(shader.program);
 
-      // Bind texture
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
       gl.uniform1i(shader.u('u_scene'), 0);
 
-      // Set uniforms
       gl.uniform2f(shader.u('u_resolution'), w, h);
       gl.uniform1f(shader.u('u_sizeX'), cfg.sizeX);
       gl.uniform1f(shader.u('u_sizeY'), cfg.sizeY);
@@ -200,7 +197,6 @@ function createVignetteBridge(width, height) {
       gl.uniform1f(shader.u('u_glassLensPower'), cfg.glassLensPower);
       gl.uniform1f(shader.u('u_glassZoom'), cfg.glassZoom);
 
-      // Draw quad
       gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
       gl.enableVertexAttribArray(shader.aPosition);
       gl.vertexAttribPointer(shader.aPosition, 2, gl.FLOAT, false, 0, 0);

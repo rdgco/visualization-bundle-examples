@@ -7,10 +7,7 @@
 
 /**
  * Compile a shader from source.
- * @param {WebGLRenderingContext} gl
  * @param {number} type - gl.VERTEX_SHADER or gl.FRAGMENT_SHADER
- * @param {string} source - GLSL source
- * @returns {WebGLShader}
  */
 export function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -27,10 +24,6 @@ export function compileShader(gl, type, source) {
 
 /**
  * Link a program from vertex and fragment shaders.
- * @param {WebGLRenderingContext} gl
- * @param {WebGLShader} vertShader
- * @param {WebGLShader} fragShader
- * @returns {WebGLProgram}
  */
 export function linkProgram(gl, vertShader, fragShader) {
   const program = gl.createProgram();
@@ -49,9 +42,6 @@ export function linkProgram(gl, vertShader, fragShader) {
  * Compile vertex + fragment source and link into a program.
  * Returns the program plus lookup helpers for attributes and uniforms.
  *
- * @param {WebGLRenderingContext} gl
- * @param {string} vertSrc
- * @param {string} fragSrc
  * @returns {{ program: WebGLProgram, attr: function(string): number, uniform: function(string): WebGLUniformLocation }}
  */
 export function createShaderProgram(gl, vertSrc, fragSrc) {
@@ -100,10 +90,7 @@ export function parseColorGL(hex, fallback = [0, 0, 0]) {
 
 /**
  * Create a VBO from a Float32Array.
- * @param {WebGLRenderingContext} gl
- * @param {Float32Array} data
  * @param {number} [usage=gl.STATIC_DRAW]
- * @returns {WebGLBuffer}
  */
 export function createBuffer(gl, data, usage) {
   const buf = gl.createBuffer();
@@ -124,9 +111,6 @@ export function createBuffer(gl, data, usage) {
  * central-display.html runs via loadFile), file:// URLs load from
  * the local filesystem without CORS restrictions.
  *
- * @param {WebGLRenderingContext} gl
- * @param {string} url - Image URL
- * @param {Object} [options]
  * @param {number[]} [options.placeholder=[128,128,128,255]] - RGBA bytes for the 1×1 fill
  * @param {boolean} [options.flip=true] - Apply UNPACK_FLIP_Y_WEBGL
  * @param {number} [options.wrap] - Wrap mode override (default: CLAMP_TO_EDGE)

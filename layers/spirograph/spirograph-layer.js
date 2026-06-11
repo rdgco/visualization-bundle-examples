@@ -66,11 +66,11 @@ export const params = {
   speed: {
     type: 'number',
     label: 'Speed',
-    default: 1.5,
-    min: 0.1,
-    max: 10,
-    step: 0.1,
-    description: 'Drawing speed in radians per second. At the default innerRatio of 0.4, one complete curve takes ~8 seconds at speed 1.5.',
+    default: 0.12,
+    min: 0.001,
+    max: 60,
+    step: 0.001,
+    description: 'Drawing speed in complete curves per second. 1 = one closed curve per second. 60 = one per frame at 60 fps (as fast as possible). Scales automatically with innerRatio so the visual pace is consistent across different petal counts.',
     modulation: { kind: 'continuous' }
   },
   trailDecay: {
@@ -222,7 +222,7 @@ export default class SpirographLayer {
     if (params.traceMode === 'full') {
       this._drawFull(c, cx, cy, R, r, d, isEpi, period, params, effectiveOpacity);
       // In full mode still advance t so spectrum colour shifts over time.
-      this._t += params.speed * (safeDt / 1000);
+      this._t += params.speed * period * (safeDt / 1000);
     } else {
       this._drawTrace(c, cx, cy, R, r, d, isEpi, period, params, safeDt, effectiveOpacity);
     }
@@ -283,9 +283,10 @@ export default class SpirographLayer {
     c.fillRect(0, 0, cx * 2, cy * 2);
     c.globalAlpha = 1;
 
-    const dtT = params.speed * (safeDt / 1000);
-    // Sub-steps keep the stroke smooth at high speeds.
-    const steps = Math.max(1, Math.ceil(dtT / 0.02));
+    const dtT = params.speed * period * (safeDt / 1000);
+    // Sub-steps keep the stroke smooth at any speed. Cap at 4000 so even
+    // "as fast as possible" (speed=60) stays well within canvas budget.
+    const steps = Math.min(4000, Math.max(1, Math.ceil(dtT / 0.02)));
 
     c.lineWidth = Math.max(0.1, params.lineThickness);
     c.lineCap = 'round';

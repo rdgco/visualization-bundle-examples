@@ -68,8 +68,8 @@ overwrites itself but never closes; use `trailDecay` or the clear reaction.
 |---|---|
 | `innerRatio` | The fundamental shape control. Jump between simple fractions (0.333, 0.25, 0.4, 0.5) for classic spirograph forms. Irrational-adjacent values produce dense never-closing curves. |
 | `armLength` | 1 = clean petal on the rolling circle's rim. < 1 = rounded, contracted. > 1 = looping petals that extend beyond the rim. Values around 1.2–1.6 produce the characteristic inner loops of extended spirograph traces. |
-| `trailDecay` | At the default 0.998 the complete curve is still ~40% visible when it closes at speed 1.5. Raise toward 0.999 to see the full curve persist; lower toward 0.99 to see only the recent tail (fast-fading snake). |
-| `speed` | ~1.5 rad/s is comfortable for innerRatio=0.4 (one full curve in ~8s). Very low speed with high trailDecay builds the pattern slowly; very high speed with low trailDecay gives a persistent glowing streak. |
+| `trailDecay` | At the default 0.998 with speed 0.12 (one curve every ~8s), the beginning of the trace is ~40% visible when the curve closes. Raise toward 0.999 to see the full persistent design; lower toward 0.99 for a fast-fading snake. |
+| `speed` | In **curves per second** — independent of `innerRatio`. 0.12 = one curve every ~8s (gentle). 1 = one per second (brisk). 60 = one per frame at 60fps (as fast as possible). Very high speed + low trailDecay gives a persistent glowing streak with no visible trail. |
 
 ## Reaction
 

@@ -43,10 +43,10 @@ export const params = {
   speed: {
     type: 'number',
     label: 'Speed',
-    default: 0.25,
+    default: 0.0625,
     min: 0,
-    max: 3,
-    step: 0.01,
+    max: 0.75,
+    step: 0.0025,
     description: 'Rate at which the multiplier auto-advances in k-units per second. 0 = static — pattern is fully controlled by the multiplier param alone.',
     modulation: { kind: 'continuous' }
   },

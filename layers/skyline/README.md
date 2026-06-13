@@ -41,6 +41,12 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
   scatter-lit "residential" lighting; `silhouetteVariety` adds richer massing —
   tiered setbacks, podium-and-tower profiles, slab/point aspect mixes, and the
   crown features (spire, antenna needles) on the tallest buildings.
+- **Street level** — `streetStyle: paved` swaps the glow ground for real
+  streets on the building grid (asphalt, dashed lane lines, sidewalks,
+  crosswalks, warm streetlights); `traffic` + `carSpeed` add GPU-animated
+  cars (white headlight / red taillight streams) whose lane positions are
+  computed in the vertex shader from time — no per-frame CPU, free to
+  modulate. Works in classic mode today; endless mode follows.
 - **A style descriptor seam** (`lib/style.js`) — all per-style aesthetics
   (wall palette, window-light tints, facade pattern set) live in one
   `CONTEMPORARY` descriptor; CPU values are read directly, shader-side
@@ -62,6 +68,8 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
 | `seed`, `density`, `maxHeight`, `footprintVariety`, `allowEll`, `allowCylinder` | Each triggers a full city geometry rebuild on change. Dragging/toggling these feels less smooth than the others — there's a brief reflow. By design: each value implies a different geometry. |
 | `footprintVariety` | Fraction of buildings that get a non-box footprint. Bevels and chops are common; the `allowEll` / `allowCylinder` toggles gate the rare L-shapes and very-rare round towers. `0` = an all-rectangular skyline. |
 | `silhouetteVariety` | Rebuild param. Fraction of mid/tall buildings given richer massing than the classic single taper: tiered wedding-cake setbacks, podium-and-tower profiles, and thin-slab / square-point aspect mixes. At `>0` the tallest building also grows its spire (stubbed out and unrendered until now) and a few towers sprout antenna needles — both gated so `0` keeps classic's flat-topped tallest exactly as it was. |
+| `streetStyle` | `glow` (classic warm pools) or `paved` (asphalt streets on the building grid: lane dashes, sidewalks, crosswalks, streetlights). Switching regenerates streetlight + car geometry, so it reflows briefly. `streetGlow` controls the roadway lighting level in `paved` style. |
+| `traffic` / `carSpeed` | Live. `traffic` is car density (`0` = none); `carSpeed` scales their speed. Cars only appear with `streetStyle: paved`. Positions are computed on the GPU from time, so both are cheap to animate — bind `carSpeed` (or `traffic`) to audio for traffic that surges with the music. |
 | `facadeVariety` | Live (no rebuild) — the window-facade style is chosen per building in the shader. `0` = every building has standard punched windows; raising it blends in small-gap and full-glass curtain-wall facades. |
 | `patternVariety` | Live (no rebuild) — fraction of building *faces* drawn from the pattern pool (mullioned curtain wall, ribbon, vertical strips, spandrel floors). Hashed per face, so corner towers mix cladding; pattern buildings also split into floor-lit offices and scatter-lit residential. `0` = the classic facade mix only, rendered bit-identically. Distinct from `facadeVariety`, which only varies window *margins*. |
 | `lightFill` | Live — how much of each window pane actually emits light. `1` ≈ the whole pane glows (continuous-glass look on curtain walls); lower leaves a dim glass surround with a smaller lit rectangle inside, so the light reads smaller than the window. |

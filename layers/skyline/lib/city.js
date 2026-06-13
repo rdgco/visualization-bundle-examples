@@ -32,8 +32,9 @@
 import { createShaderProgram, createBuffer, parseColorGL } from './gl-utils.js';
 import {
   BUILDING_VERT, composeBuildingFrag,
-  GROUND_VERT, GROUND_FRAG,
-  LIGHT_VERT, LIGHT_FRAG
+  GROUND_VERT, composeGroundFrag,
+  LIGHT_VERT, LIGHT_FRAG,
+  CAR_VERT, CAR_FRAG
 } from './shaders.js';
 import { DEFAULT_STYLE, styleFragGLSL } from './style.js';
 import { mulberry32, generateLayout } from './layout.js';
@@ -95,6 +96,13 @@ class City {
     this.lightFill = config.lightFill ?? 0.8;
     this.patternVariety = config.patternVariety ?? 0.0;
     this.silhouetteVariety = config.silhouetteVariety ?? 0.0;
+    // Street level (workstream C). streetStyle is stored as a number
+    // (0 = glow, 1 = paved) for direct use as a shader uniform; it triggers
+    // a rebuild because the streetlight + car geometry depends on it.
+    // traffic / carSpeed are live uniforms (no rebuild).
+    this.streetStyle = config.streetStyle === 'paved' ? 1 : 0;
+    this.traffic = config.traffic ?? 0.0;
+    this.carSpeed = config.carSpeed ?? 1.0;
 
     // Active style descriptor (workstream-G seam). One style today; its
     // shader-side constants are injected into the building fragment shader
@@ -108,9 +116,11 @@ class City {
 
     // Compile shaders. The building fragment shader gets the active style's
     // GLSL prelude injected at the `//__STYLE__` marker.
-    this.buildingShader = createShaderProgram(gl, BUILDING_VERT, composeBuildingFrag(styleFragGLSL(this.style)));
-    this.groundShader = createShaderProgram(gl, GROUND_VERT, GROUND_FRAG);
+    const styleGLSL = styleFragGLSL(this.style);
+    this.buildingShader = createShaderProgram(gl, BUILDING_VERT, composeBuildingFrag(styleGLSL));
+    this.groundShader = createShaderProgram(gl, GROUND_VERT, composeGroundFrag(styleGLSL));
     this.lightShader = createShaderProgram(gl, LIGHT_VERT, LIGHT_FRAG);
+    this.carShader = createShaderProgram(gl, CAR_VERT, CAR_FRAG);
 
     this._generate();
   }
@@ -123,6 +133,7 @@ class City {
     if (this.roofVBO) gl.deleteBuffer(this.roofVBO);
     if (this.groundVBO) gl.deleteBuffer(this.groundVBO);
     if (this.lightVBO) gl.deleteBuffer(this.lightVBO);
+    if (this.carVBO) gl.deleteBuffer(this.carVBO);
 
     const rng = mulberry32(this.seed);
     const layout = generateLayout(rng, {
@@ -136,7 +147,8 @@ class City {
 
     const buildBuf = [];
     const roofBuf = [];
-    const lightBuf = []; // x,y,z,phase per light
+    const lightBuf = []; // x,y,z,phase,r,g,b per light (aviation red, streetlight warm)
+    const AVIATION_COLOR = [1.0, 0.04, 0.02];
     let tallestId = -1, tallestH = 0;
 
     for (const b of layout.buildings) {
@@ -245,7 +257,51 @@ class City {
 
       // Aviation lights on tall buildings — now sit atop any spire/antenna.
       if (b.h > this.maxHeight * 0.45) {
-        lightBuf.push(top.x, topmost + 0.05, top.z, b.roofRng > 0.4 ? b.roofRng : -1.0);
+        lightBuf.push(top.x, topmost + 0.05, top.z, b.roofRng > 0.4 ? b.roofRng : -1.0,
+          AVIATION_COLOR[0], AVIATION_COLOR[1], AVIATION_COLOR[2]);
+      }
+    }
+
+    // ── Street level (workstream C): streetlights + cars, paved only ──
+    // Both align to the road grid (road centres sit half a cell off the
+    // building grid lines, matching the ground shader). Generated whenever
+    // streetStyle is paved; traffic / carSpeed then animate the cars via
+    // uniforms with no rebuild. Cars work in classic and (later) endless.
+    const carBuf = [];
+    if (this.streetStyle >= 0.5) {
+      const sp = this.spacing;
+      const halfW = this.citySize[0] * 0.5, halfD = this.citySize[1] * 0.5;
+      const lc = this.style.street.lightColor;
+      const roadHalf = sp * 0.20, laneOff = roadHalf * 0.45;
+      const carRng = mulberry32((this.seed ^ 0x9e3779b9) >>> 0);
+
+      // Road centres: x (or z) where mod(coord, sp) == sp*0.5.
+      const firstX = Math.ceil((-halfW) / sp + 0.5) * sp - sp * 0.5;
+      const firstZ = Math.ceil((-halfD) / sp + 0.5) * sp - sp * 0.5;
+      const CARS_PER_ROAD = 6;
+
+      // Roads running in z (constant x). A streetlight at each intersection,
+      // cars streaming both directions in offset lanes.
+      for (let cx = firstX; cx <= halfW; cx += sp) {
+        for (let cz = firstZ; cz <= halfD; cz += sp) {
+          lightBuf.push(cx, 0.9, cz, -1.0, lc[0], lc[1], lc[2]);  // steady warm streetlight
+        }
+        for (let i = 0; i < CARS_PER_ROAD; i++) {
+          const dir = carRng() < 0.5 ? 1 : -1;
+          const oz = dir > 0 ? -halfD : halfD;
+          // origin, lane(dirX,dirZ,len,phase), meta(speed,colorFlag,vis)
+          carBuf.push(cx + dir * laneOff, oz, 0, dir, halfD * 2,
+            carRng(), 0.05 + carRng() * 0.13, dir > 0 ? 1 : 0, carRng());
+        }
+      }
+      // Roads running in x (constant z).
+      for (let cz = firstZ; cz <= halfD; cz += sp) {
+        for (let i = 0; i < CARS_PER_ROAD; i++) {
+          const dir = carRng() < 0.5 ? 1 : -1;
+          const ox = dir > 0 ? -halfW : halfW;
+          carBuf.push(ox, cz + dir * laneOff, dir, 0, halfW * 2,
+            carRng(), 0.05 + carRng() * 0.13, dir > 0 ? 1 : 0, carRng());
+        }
       }
     }
 
@@ -272,10 +328,15 @@ class City {
     this.groundCount = gVerts.length / 3;
     this.groundVBO = createBuffer(gl, this.groundData);
 
-    // Light points: 4 floats each (x,y,z,phase)
+    // Light points: 7 floats each (x,y,z,phase,r,g,b)
     this.lightData = new Float32Array(lightBuf);
-    this.lightCount = lightBuf.length / 4;
+    this.lightCount = lightBuf.length / 7;
     this.lightVBO = lightBuf.length > 0 ? createBuffer(gl, this.lightData) : null;
+
+    // Car points: 9 floats each (origin2 + lane4 + meta3)
+    this.carData = new Float32Array(carBuf);
+    this.carCount = carBuf.length / 9;
+    this.carVBO = carBuf.length > 0 ? createBuffer(gl, this.carData) : null;
   }
 
   update(dt) {
@@ -317,6 +378,7 @@ class City {
       gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
       gl.uniform1f(sh.uniform('u_spacing'), this.spacing);
       gl.uniform2fv(sh.uniform('u_citySize'), this.citySize);
+      gl.uniform1f(sh.uniform('u_streetStyle'), this.streetStyle);
       gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
       gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
 
@@ -328,7 +390,9 @@ class City {
       gl.disableVertexAttribArray(posLoc);
     }
 
-    // ── Red aviation lights ──
+    // ── Point lights: red aviation (blinking) + warm streetlights (steady) ──
+    // Both come from one VBO (7 floats: pos3 + phase + color3) and one shader;
+    // the per-point color attribute + phase<0 steady flag distinguish them.
     if (this.lightVBO && this.lightCount > 0) {
       const sh = this.lightShader;
       gl.useProgram(sh.program);
@@ -346,13 +410,58 @@ class City {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.lightVBO);
       const posLoc = sh.attr('a_position');
       const phaseLoc = sh.attr('a_phase');
+      const colLoc = sh.attr('a_color');
       gl.enableVertexAttribArray(posLoc);
-      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 28, 0);
       gl.enableVertexAttribArray(phaseLoc);
-      gl.vertexAttribPointer(phaseLoc, 1, gl.FLOAT, false, 16, 12);
+      gl.vertexAttribPointer(phaseLoc, 1, gl.FLOAT, false, 28, 12);
+      gl.enableVertexAttribArray(colLoc);
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, 28, 16);
       gl.drawArrays(gl.POINTS, 0, this.lightCount);
       gl.disableVertexAttribArray(posLoc);
       gl.disableVertexAttribArray(phaseLoc);
+      gl.disableVertexAttribArray(colLoc);
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+
+    // ── Cars ── animated point sprites; positions computed in the vertex
+    // shader from u_time, so traffic / carSpeed are pure uniform changes.
+    // traffic <= 0 culls the whole fleet (each car's visThreshold > 0).
+    if (this.carVBO && this.carCount > 0 && this.traffic > 0) {
+      const sh = this.carShader;
+      const st = this.style.street;
+      gl.useProgram(sh.program);
+      gl.uniformMatrix4fv(sh.uniform('u_viewProj'), false, viewProj);
+      gl.uniform1f(sh.uniform('u_time'), this.time);
+      gl.uniform1f(sh.uniform('u_carSpeed'), this.carSpeed);
+      gl.uniform1f(sh.uniform('u_traffic'), this.traffic);
+      gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
+      gl.uniform1f(sh.uniform('u_pointScale'), 220);
+      gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
+      gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
+      gl.uniform3fv(sh.uniform('u_carHead'), st.carHead);
+      gl.uniform3fv(sh.uniform('u_carTail'), st.carTail);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      gl.depthMask(false);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.carVBO);
+      const oLoc = sh.attr('a_origin');
+      const lLoc = sh.attr('a_lane');
+      const mLoc = sh.attr('a_meta');
+      gl.enableVertexAttribArray(oLoc);
+      gl.vertexAttribPointer(oLoc, 2, gl.FLOAT, false, 36, 0);
+      gl.enableVertexAttribArray(lLoc);
+      gl.vertexAttribPointer(lLoc, 4, gl.FLOAT, false, 36, 8);
+      gl.enableVertexAttribArray(mLoc);
+      gl.vertexAttribPointer(mLoc, 3, gl.FLOAT, false, 36, 24);
+      gl.drawArrays(gl.POINTS, 0, this.carCount);
+      gl.disableVertexAttribArray(oLoc);
+      gl.disableVertexAttribArray(lLoc);
+      gl.disableVertexAttribArray(mLoc);
 
       gl.depthMask(true);
       gl.disable(gl.BLEND);
@@ -529,6 +638,13 @@ class City {
     if (config.silhouetteVariety !== undefined && config.silhouetteVariety !== this.silhouetteVariety) { this.silhouetteVariety = config.silhouetteVariety; needsRebuild = true; }
     if (config.allowEll !== undefined && config.allowEll !== this.allowEll) { this.allowEll = config.allowEll; needsRebuild = true; }
     if (config.allowCylinder !== undefined && config.allowCylinder !== this.allowCylinder) { this.allowCylinder = config.allowCylinder; needsRebuild = true; }
+    if (config.streetStyle !== undefined) {
+      // String enum → 0/1; rebuilds because streetlight + car geometry depend on it.
+      const ss = config.streetStyle === 'paved' ? 1 : 0;
+      if (ss !== this.streetStyle) { this.streetStyle = ss; needsRebuild = true; }
+    }
+    if (config.traffic !== undefined) this.traffic = config.traffic;       // live uniform
+    if (config.carSpeed !== undefined) this.carSpeed = config.carSpeed;    // live uniform
     if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;
     if (config.lightFill !== undefined) this.lightFill = config.lightFill;
     if (config.patternVariety !== undefined) this.patternVariety = config.patternVariety;
@@ -556,6 +672,8 @@ class City {
     if (config.sunIntensity !== undefined) this.sunIntensity = config.sunIntensity;
     if (config.speed !== undefined) this.speed = config.speed;
     if (config.curvature !== undefined) this.curvature = config.curvature;
+    if (config.traffic !== undefined) this.traffic = config.traffic;
+    if (config.carSpeed !== undefined) this.carSpeed = config.carSpeed;
     if (config.lightColor !== undefined && Array.isArray(config.lightColor)) this.lightColor = config.lightColor;
   }
 
@@ -567,9 +685,11 @@ class City {
     if (this.roofVBO) gl.deleteBuffer(this.roofVBO);
     if (this.groundVBO) gl.deleteBuffer(this.groundVBO);
     if (this.lightVBO) gl.deleteBuffer(this.lightVBO);
+    if (this.carVBO) gl.deleteBuffer(this.carVBO);
     gl.deleteProgram(this.buildingShader.program);
     gl.deleteProgram(this.groundShader.program);
     gl.deleteProgram(this.lightShader.program);
+    gl.deleteProgram(this.carShader.program);
   }
 }
 

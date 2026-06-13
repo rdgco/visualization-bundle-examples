@@ -72,6 +72,20 @@ export const CONTEMPORARY = {
     tierShrink: [0.60, 0.80],   // per-tier footprint scale range (setbacks)
     podiumScale: [0.42, 0.62],  // tower footprint vs podium (podium+tower)
     aspectBias: 0.35       // P(stretch into a thin slab / square point) at full variety
+  },
+
+  // Street level (workstream C). Asphalt / sidewalk / lane-marking colors
+  // are injected into the ground fragment shader as #defines; the light
+  // and car colors are read at geometry/uniform time. A sci-fi style would
+  // swap these for dark glass plazas, cyan light strips, etc.
+  street: {
+    asphalt: [0.045, 0.045, 0.055],
+    sidewalk: [0.14, 0.14, 0.155],
+    marking: [0.52, 0.47, 0.30],     // warm faded paint (lane lines)
+    crosswalk: [0.58, 0.58, 0.60],
+    lightColor: [1.0, 0.84, 0.54],   // warm-white streetlight glow
+    carHead: [0.92, 0.94, 1.0],      // headlight white (one travel direction)
+    carTail: [1.0, 0.13, 0.06]       // taillight red (the other)
   }
 };
 
@@ -88,19 +102,25 @@ function glslVec3(c) {
 }
 
 /**
- * Build the GLSL prelude of style constants prepended to the building
- * fragment shader (see shaders.composeBuildingFrag). Emitting the
- * contemporary tints reproduces the previously-hardcoded literals exactly.
+ * Build the GLSL prelude of style constants prepended to a fragment shader
+ * (building or ground — see shaders.composeBuildingFrag / composeGroundFrag).
+ * A shader only references the macros it needs; the rest are harmless. The
+ * contemporary values reproduce the previously-hardcoded literals exactly.
  *
  * @param {object} style  a style descriptor (defaults to CONTEMPORARY)
  * @returns {string} GLSL `#define` lines
  */
 export function styleFragGLSL(style = DEFAULT_STYLE) {
   const w = style.window;
+  const s = style.street;
   return [
     `#define STYLE_TINT_WARM  ${glslVec3(w.tintWarm)}`,
     `#define STYLE_TINT_COOL  ${glslVec3(w.tintCool)}`,
     `#define STYLE_TINT_GREEN ${glslVec3(w.tintGreen)}`,
-    `#define STYLE_TINT_WHITE ${glslVec3(w.tintWhite)}`
+    `#define STYLE_TINT_WHITE ${glslVec3(w.tintWhite)}`,
+    `#define STREET_ASPHALT   ${glslVec3(s.asphalt)}`,
+    `#define STREET_SIDEWALK  ${glslVec3(s.sidewalk)}`,
+    `#define STREET_MARKING   ${glslVec3(s.marking)}`,
+    `#define STREET_CROSSWALK ${glslVec3(s.crosswalk)}`
   ].join('\n');
 }

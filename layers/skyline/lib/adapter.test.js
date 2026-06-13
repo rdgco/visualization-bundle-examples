@@ -62,9 +62,25 @@ test('silhouetteVariety is declared, defaults to classic (0), and is forwarded',
 test('declared defaults map to classic flags', () => {
   const cfg = configFromParams(declaredDefaults());
   assert.strictEqual(cfg.patternVariety, 0, 'patternVariety classic');
+  assert.strictEqual(cfg.silhouetteVariety, 0, 'silhouetteVariety classic');
   assert.strictEqual(cfg.facadeVariety, params.facadeVariety.default);
+  assert.strictEqual(cfg.streetStyle, 'glow', 'street style classic');
+  assert.strictEqual(cfg.traffic, 0, 'no traffic by default');
   // lightColor is the one field whose shape changes: hex string → rgb array.
   assert.ok(Array.isArray(cfg.lightColor) && cfg.lightColor.length === 3);
+});
+
+test('street params (streetStyle / traffic / carSpeed) are declared and forwarded', () => {
+  assert.strictEqual(params.streetStyle.type, 'enum');
+  assert.deepStrictEqual(params.streetStyle.options, ['glow', 'paved']);
+  assert.strictEqual(params.streetStyle.default, 'glow');
+  assert.deepStrictEqual(params.traffic.modulation, { kind: 'continuous' });
+  assert.deepStrictEqual(params.carSpeed.modulation, { kind: 'continuous' });
+
+  const cfg = configFromParams({ ...declaredDefaults(), streetStyle: 'paved', traffic: 0.5, carSpeed: 2 });
+  assert.strictEqual(cfg.streetStyle, 'paved');
+  assert.strictEqual(cfg.traffic, 0.5);
+  assert.strictEqual(cfg.carSpeed, 2);
 });
 
 console.log(`\n${passed} passed\n`);

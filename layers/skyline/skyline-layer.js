@@ -1,9 +1,9 @@
 /**
  * Skyline layer — canonical 3D SDK example for the harness.
  *
- * Wraps the City renderer (migrated from the host project's compositor)
- * with the harness contract surface. The renderer logic in `lib/city.js`
- * is untouched from the source; this file is the thin adapter that
+ * Wraps the City renderer (originally migrated from the host project's
+ * compositor, since extended in-tree) with the harness contract surface.
+ * This file is the thin adapter that
  *
  *   - declares the layer's contract surface (key/label/params/reactions)
  *   - manages a viewProj-producing camera since the harness doesn't
@@ -25,7 +25,7 @@ import City, { parseColorGL } from './lib/city.js';
 
 export const key = 'skyline';
 export const label = 'City Skyline';
-export const description = 'Procedural night-time city skyline. Hundreds of buildings with a configurable mix of footprints (boxes, beveled/chopped corners, rare L-shapes and round towers) and window facades (standard punched, small-gap, and full-glass curtain walls), with lit windows whose glow can fill the pane or sit inset within it, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
+export const description = 'Procedural night-time city skyline. Hundreds of buildings with a configurable mix of footprints (boxes, beveled/chopped corners, rare L-shapes and round towers) and window facades (standard punched, small-gap, and full-glass curtain walls), with lit windows whose glow can fill the pane or sit inset within it, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Pattern variety layers in real facade types — mullioned curtain walls, ribbon and vertical-strip windows, alternating spandrel floors — hashed per face and split into floor-lit offices and scatter-lit residential. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
 export const wantsContext = 'webgl';
 
 /**
@@ -94,6 +94,16 @@ export const params = {
     max: 1,
     step: 0.01,
     description: 'How much of each window pane actually lights up. 1 = the whole pane glows; lower leaves a glass surround with a smaller lit rectangle inside.',
+    modulation: { kind: 'continuous' }
+  },
+  patternVariety: {
+    type: 'number',
+    label: 'Pattern variety',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Fraction of building faces drawn with a real facade pattern — mullioned curtain wall (panes read as a grid, not flat glass), horizontal ribbon windows, vertical strips, or alternating spandrel floors. Style is hashed per face, so corner towers can mix cladding, and pattern buildings split into floor-lit "offices" vs scatter-lit "residential". 0 = the classic facade mix only.',
     modulation: { kind: 'continuous' }
   },
   floorHeight: {
@@ -237,7 +247,9 @@ export const reactions = {
 
 const DEFAULT_LIGHT_COLOR_RGB = [0.85, 0.65, 0.35];
 
-function configFromParams(params) {
+// Exported for unit tests (config plumbing). The adapter itself calls it
+// internally on every render().
+export function configFromParams(params) {
   // Translate harness-shaped values into the City constructor's config.
   // The only field that changes shape is `lightColor`: harness ships a
   // hex string ('#rrggbb'); City wants a [r, g, b] float array.
@@ -247,6 +259,7 @@ function configFromParams(params) {
     windowScale: params.windowScale,
     facadeVariety: params.facadeVariety,
     lightFill: params.lightFill,
+    patternVariety: params.patternVariety,
     floorHeight: params.floorHeight,
     density: params.density,
     maxHeight: params.maxHeight,

@@ -15,6 +15,8 @@
 // Seeded RNG
 // ============================================================================
 
+import { DEFAULT_STYLE } from './style.js';
+
 export function mulberry32(a) {
   return () => {
     a |= 0; a = a + 0x6D2B79F5 | 0;
@@ -26,17 +28,16 @@ export function mulberry32(a) {
 
 // ============================================================================
 // Palette
+//
+// The wall-color palette now lives on the style descriptor (workstream-G
+// seam) so future city styles swap palettes without touching the layout
+// generator. `pickColor` is unchanged otherwise — same draw from the same
+// 12 tones, same per-building brightness jitter.
 // ============================================================================
 
-const PALETTES = [
-  [0.11, 0.12, 0.14], [0.13, 0.13, 0.15], [0.09, 0.10, 0.12],
-  [0.15, 0.13, 0.11], [0.14, 0.12, 0.10], [0.09, 0.11, 0.16],
-  [0.08, 0.10, 0.14], [0.09, 0.12, 0.11], [0.13, 0.09, 0.08],
-  [0.10, 0.10, 0.11], [0.12, 0.11, 0.13], [0.14, 0.14, 0.12]
-];
-
-export function pickColor(rng) {
-  const p = PALETTES[Math.floor(rng() * PALETTES.length)];
+export function pickColor(rng, style = DEFAULT_STYLE) {
+  const palettes = style.palettes;
+  const p = palettes[Math.floor(rng() * palettes.length)];
   const b = 0.65 + rng() * 0.7;
   return [p[0] * b, p[1] * b, p[2] * b];
 }

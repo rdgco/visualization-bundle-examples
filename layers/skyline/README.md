@@ -35,7 +35,16 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
   `allowEll` / `allowCylinder` toggles vary the building silhouettes
   (box / bevel / chop / L-shape / round tower); `facadeVariety` and
   `lightFill` vary the window styling (standard / small-gap / curtain-wall,
-  and how much of each pane lights up).
+  and how much of each pane lights up); `patternVariety` layers in real
+  facade *patterns* — mullioned curtain walls, ribbon and vertical-strip
+  windows, spandrel floors — hashed per face, with floor-lit "office" vs
+  scatter-lit "residential" lighting.
+- **A style descriptor seam** (`lib/style.js`) — all per-style aesthetics
+  (wall palette, window-light tints, facade pattern set) live in one
+  `CONTEMPORARY` descriptor; CPU values are read directly, shader-side
+  values are injected into the building fragment shader as a `#define`
+  prelude. Groundwork for future city styles (sci-fi, spaceport) without
+  a renderer rewrite — there is one style today, so no `style` param yet.
 - **A `pulse` reaction** with three entry strategies (`bottom-up`,
   `top-down`, `point-out`) that send brightness waves through the lit
   windows. Demonstrates the harness's reaction-with-args shape and the
@@ -51,6 +60,7 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
 | `seed`, `density`, `maxHeight`, `footprintVariety`, `allowEll`, `allowCylinder` | Each triggers a full city geometry rebuild on change. Dragging/toggling these feels less smooth than the others — there's a brief reflow. By design: each value implies a different geometry. |
 | `footprintVariety` | Fraction of buildings that get a non-box footprint. Bevels and chops are common; the `allowEll` / `allowCylinder` toggles gate the rare L-shapes and very-rare round towers. `0` = an all-rectangular skyline. |
 | `facadeVariety` | Live (no rebuild) — the window-facade style is chosen per building in the shader. `0` = every building has standard punched windows; raising it blends in small-gap and full-glass curtain-wall facades. |
+| `patternVariety` | Live (no rebuild) — fraction of building *faces* drawn from the pattern pool (mullioned curtain wall, ribbon, vertical strips, spandrel floors). Hashed per face, so corner towers mix cladding; pattern buildings also split into floor-lit offices and scatter-lit residential. `0` = the classic facade mix only, rendered bit-identically. Distinct from `facadeVariety`, which only varies window *margins*. |
 | `lightFill` | Live — how much of each window pane actually emits light. `1` ≈ the whole pane glows (continuous-glass look on curtain walls); lower leaves a dim glass surround with a smaller lit rectangle inside, so the light reads smaller than the window. |
 | `lightColor` | Declares `modulation: { kind: 'continuous' }` as a forward-compat hint, but the harness's audio binding only resolves to numbers — so the panel intentionally doesn't show a BIND dropdown on this widget. The color picker is the only operator-driven input. |
 
@@ -62,11 +72,19 @@ skyline/
   lib/
     city.js            Procedural city + render orchestration
     layout.js          Building grid generator
+    style.js           Per-style aesthetic descriptors + shader-inject prelude
     geometry.js        Building / roof / light geometry
-    shaders.js         The three GLSL programs
+    shaders.js         The three GLSL programs + style composer
     gl-utils.js        Shader compile / VBO helpers
     math.js            Mat4 / vec3 helpers (column-major Float32Array, WebGL convention)
+    layout.test.js     Layout determinism + classic-layout regression (plain node)
+    style.test.js      Style descriptor shape + shader injection (plain node)
+    adapter.test.js    configFromParams plumbing (plain node)
 ```
+
+The `lib/*.test.js` files are plain-node (`node:assert`) and run in bundle
+CI; they cover the GL-independent logic — seeded layout determinism, the
+classic-layout regression lock, the style descriptor, and config plumbing.
 
 `skyline-layer.js` is the contract entry — declares params, reactions,
 and `wantsCamera`. The renderer details live under `lib/`; that code

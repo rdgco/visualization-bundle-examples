@@ -58,6 +58,7 @@ export const BUILDING_VERT = CURVE_GLSL + `
 
 export const BUILDING_FRAG = `
   precision mediump float;
+  //__STYLE__
 
   uniform float u_lightRatio;
   uniform float u_windowScale;
@@ -67,8 +68,9 @@ export const BUILDING_FRAG = `
   uniform float u_time;
   uniform float u_sunIntensity;
   uniform vec3  u_lightColor;
-  uniform float u_facadeVariety;  // 0 = all standard punched windows; 1 = rich curtain-wall / small-gap mix
-  uniform float u_lightFill;      // fraction of each window pane that actually emits light
+  uniform float u_facadeVariety;   // 0 = all standard punched windows; 1 = rich curtain-wall / small-gap mix
+  uniform float u_lightFill;       // fraction of each window pane that actually emits light
+  uniform float u_patternVariety;  // 0 = classic facade mix only; raises the share of pattern-pool faces (ribbon, vertical, spandrel, mullioned)
 
   // ---- Pulse-reaction surface waves ----
   // Up to 4 concurrent waves. Each slot's geometry is baked at injection
@@ -166,6 +168,14 @@ export const BUILDING_FRAG = `
       return;
     }
 
+    // face index for hash — computed up here so the facade pattern can be
+    // chosen per face (a corner tower can wear different cladding on each
+    // street). Wall fragments return before using it; harmless.
+    float faceIdx = 0.0;
+    if (n.x > 0.5) faceIdx = 1.0;
+    else if (n.x < -0.5) faceIdx = 2.0;
+    else if (n.z > 0.5) faceIdx = 3.0;
+
     // per-building window variation. faceU/faceV are baked by the geometry
     // emitter (0..1 along the face width and up the segment), so the grid
     // wraps any footprint — box, bevel, chop, ell, or cylinder facet.
@@ -181,23 +191,58 @@ export const BUILDING_FRAG = `
     float col = floor(cellU), row = floor(cellV);
     float inU = fract(cellU), inV = fract(cellV);
 
-    // Facade style per building, blended in by u_facadeVariety:
-    //   standard punched (wide borders) → small-gap → curtain wall (fine mullions).
-    float fHash = hash2(vec2(buildingId, 23.0));
-    float curtainCut = u_facadeVariety * 0.45;  // glassiest share
-    float gapCut     = u_facadeVariety;         // small-gap share; remainder standard
+    // Facade resolution in two pools:
+    //   - pattern pool (workstream A): a per-face hash below u_patternVariety
+    //     selects ribbon / vertical-strip / spandrel / mullioned-curtain
+    //     cladding. At u_patternVariety 0 this is never taken → classic.
+    //   - classic mix: standard punched → small-gap → curtain wall, blended
+    //     by u_facadeVariety exactly as before.
     float mH, mV;
-    if (fHash < curtainCut) {
-      mH = 0.03 + 0.02 * hash2(vec2(buildingId, 24.0));   // curtain wall: panes nearly touch
-      mV = 0.03 + 0.02 * hash2(vec2(buildingId, 25.0));
-    } else if (fHash < gapCut) {
-      mH = 0.08 + 0.04 * hash2(vec2(buildingId, 24.0));   // small gaps
-      mV = 0.10 + 0.04 * hash2(vec2(buildingId, 25.0));
+    bool solidRow = false;   // spandrel: this whole floor row is solid wall
+    bool floorLit = false;   // office-style whole-floor lighting (vs scatter)
+    bool patternFace = hash2(vec2(buildingId * 2.0 + faceIdx, 53.0)) < u_patternVariety;
+
+    if (patternFace) {
+      float pid = floor(hash2(vec2(buildingId * 3.0 + faceIdx * 5.0, 61.0)) * 4.0);
+      floorLit = hash2(vec2(buildingId, 51.0)) < 0.55;  // ~half the pattern stock reads as offices
+      if (pid < 0.5) {
+        // mullioned curtain wall: thin but *visible* mullions (vs the
+        // borderless classic curtain), so glass towers read as a grid.
+        mH = 0.06 + 0.02 * hash2(vec2(buildingId, 24.0));
+        mV = 0.06 + 0.02 * hash2(vec2(buildingId, 25.0));
+      } else if (pid < 1.5) {
+        // ribbon windows: merge horizontally into bands, solid spandrel
+        // between floors.
+        mH = 0.015;
+        mV = 0.28 + 0.08 * hash2(vec2(buildingId, 26.0));
+      } else if (pid < 2.5) {
+        // vertical strips: full-height window slots, solid piers between.
+        mH = 0.28 + 0.08 * hash2(vec2(buildingId, 27.0));
+        mV = 0.015;
+      } else {
+        // spandrel: alternating glass / solid floor bands.
+        mH = 0.04;
+        mV = 0.06;
+        solidRow = mod(row, 2.0) > 0.5;
+      }
     } else {
-      mH = 0.2 + 0.07 * hash2(vec2(buildingId, 11.0));    // standard punched windows
-      mV = 0.16 + 0.09 * hash2(vec2(buildingId, 13.0));
+      // Classic facade mix (unchanged):
+      //   standard punched (wide borders) → small-gap → curtain wall.
+      float fHash = hash2(vec2(buildingId, 23.0));
+      float curtainCut = u_facadeVariety * 0.45;  // glassiest share
+      float gapCut     = u_facadeVariety;         // small-gap share; remainder standard
+      if (fHash < curtainCut) {
+        mH = 0.03 + 0.02 * hash2(vec2(buildingId, 24.0));   // curtain wall: panes nearly touch
+        mV = 0.03 + 0.02 * hash2(vec2(buildingId, 25.0));
+      } else if (fHash < gapCut) {
+        mH = 0.08 + 0.04 * hash2(vec2(buildingId, 24.0));   // small gaps
+        mV = 0.10 + 0.04 * hash2(vec2(buildingId, 25.0));
+      } else {
+        mH = 0.2 + 0.07 * hash2(vec2(buildingId, 11.0));    // standard punched windows
+        mV = 0.16 + 0.09 * hash2(vec2(buildingId, 13.0));
+      }
     }
-    bool inWindow = inU > mH && inU < (1.0-mH) && inV > mV && inV < (1.0-mV);
+    bool inWindow = inU > mH && inU < (1.0-mH) && inV > mV && inV < (1.0-mV) && !solidRow;
 
     if (!inWindow) {
       vec3 wall = v_color;
@@ -209,13 +254,15 @@ export const BUILDING_FRAG = `
       return;
     }
 
-    // face index for hash
-    float faceIdx = 0.0;
-    if (n.x > 0.5) faceIdx = 1.0;
-    else if (n.x < -0.5) faceIdx = 2.0;
-    else if (n.z > 0.5) faceIdx = 3.0;
     vec2 wId = vec2(col + buildingId * 13.7 + faceIdx * 37.0, row + buildingId * 7.3);
     float h = hash(wId);
+
+    // Lit-window decision. Residential (the classic distribution) scatters
+    // lit panes per cell. Offices (pattern stock only) light whole floors
+    // together — the row-correlated hash makes a floor read as one lit slab.
+    float litHash = floorLit
+      ? hash(vec2(row + buildingId * 7.3, faceIdx * 37.0 + 7.0))
+      : h;
 
     float bldgBias = hash2(vec2(buildingId, 19.0));
     float effRatio = clamp(u_lightRatio * (0.4 + bldgBias * 0.8), 0.0, 1.0);
@@ -228,8 +275,11 @@ export const BUILDING_FRAG = `
     glass += vec3(0.85, 0.65, 0.35) * streetLight * 0.12;
     glass += v_color * (sunAmb * 0.5 + sunDiff * 0.3);
     glass += vec3(0.4, 0.45, 0.55) * u_sunIntensity * 0.08;
+    // Per-pane reflectivity on pattern faces: a subtle value jitter so a
+    // curtain wall reads as individual panes, not one flat sheet.
+    if (patternFace) glass *= 0.78 + 0.44 * hash(vec2(col + buildingId * 3.1, row + faceIdx * 9.0));
 
-    if (h >= effRatio) {
+    if (litHash >= effRatio) {
       gl_FragColor = vec4(glass, 1.0);
       return;
     }
@@ -246,10 +296,10 @@ export const BUILDING_FRAG = `
     vec3 thisLight = u_lightColor;
     float va = u_colorVariance;
     float cc = hash(wId + 5.0);
-    if (cc < 0.4)       thisLight = mix(thisLight, u_lightColor * vec3(1.0,0.75,0.45), va * hash(wId+4.0));
-    else if (cc < 0.65) { thisLight = mix(thisLight, vec3(0.55,0.65,1.0), va*0.7); intensity *= 0.75; }
-    else if (cc < 0.8)  { thisLight = mix(thisLight, vec3(0.7,1.0,0.7), va*0.5); intensity *= 0.8; }
-    else                 thisLight = mix(thisLight, vec3(1.0,0.95,0.85), va*0.6);
+    if (cc < 0.4)       thisLight = mix(thisLight, u_lightColor * STYLE_TINT_WARM, va * hash(wId+4.0));
+    else if (cc < 0.65) { thisLight = mix(thisLight, STYLE_TINT_COOL, va*0.7); intensity *= 0.75; }
+    else if (cc < 0.8)  { thisLight = mix(thisLight, STYLE_TINT_GREEN, va*0.5); intensity *= 0.8; }
+    else                 thisLight = mix(thisLight, STYLE_TINT_WHITE, va*0.6);
 
     // The emitting area can be smaller than the pane (u_lightFill): a glowing
     // rectangle inset within the glass, so the light "doesn't fill the window."
@@ -275,6 +325,14 @@ export const BUILDING_FRAG = `
     gl_FragColor = vec4(wc, 1.0);
   }
 `;
+
+// Inject a style's GLSL prelude (a block of `#define`s from
+// style.styleFragGLSL) into the building fragment shader, replacing the
+// `//__STYLE__` marker just after the precision qualifier. Taking the
+// prelude as a string keeps this module free of a style.js dependency.
+export function composeBuildingFrag(styleGLSL = '') {
+  return BUILDING_FRAG.replace('//__STYLE__', styleGLSL);
+}
 
 export const GROUND_VERT = CURVE_GLSL + `
   attribute vec3 a_position;

@@ -12,27 +12,30 @@
  * max height, window hue, color variance, street glow, sunlight,
  * speed, curvature.
  *
- * Migrated to visualization-harness 2026-05-11 (TASK-05). The original
- * source is the host application's `city` compositor object. This file
- * preserves the renderer logic unchanged — the harness-contract
+ * Originally migrated from the host application's `city` compositor
+ * (2026-05-11, TASK-05); since extended in-tree by the skyline
+ * enhancement task — facade pattern variety, and a style descriptor
+ * seam (lib/style.js) that gathers per-style aesthetics so future city
+ * styles plug in without a renderer rewrite. The harness-contract
  * adapter lives in `../skyline-layer.js`.
  *
  * Module layout (inside `layers/skyline/lib/`):
  *   city.js     — this file: the City renderer class
- *   shaders.js  — GLSL sources
- *   layout.js   — seeded RNG, palette, building placement
+ *   shaders.js  — GLSL sources + style-injection composer
+ *   style.js    — per-style aesthetic descriptors (palette, tints, ...)
+ *   layout.js   — seeded RNG, building placement
  *   geometry.js — quad/box/roof vertex emitters
  *   gl-utils.js — shader compile + buffer create + hex-color parse
  *   math.js     — minimal mat4 / vec3 helpers
- *   camera.js   — orbit/drift/fixed camera + viewProj
  */
 
 import { createShaderProgram, createBuffer, parseColorGL } from './gl-utils.js';
 import {
-  BUILDING_VERT, BUILDING_FRAG,
+  BUILDING_VERT, composeBuildingFrag,
   GROUND_VERT, GROUND_FRAG,
   LIGHT_VERT, LIGHT_FRAG
 } from './shaders.js';
+import { DEFAULT_STYLE, styleFragGLSL } from './style.js';
 import { mulberry32, generateLayout } from './layout.js';
 import { buildFootprintPolygon, generatePrism, generateRoofTri, generateRoofQuad } from './geometry.js';
 
@@ -90,14 +93,21 @@ class City {
     this.allowCylinder = config.allowCylinder ?? true;
     this.facadeVariety = config.facadeVariety ?? 0.5;
     this.lightFill = config.lightFill ?? 0.8;
+    this.patternVariety = config.patternVariety ?? 0.0;
+
+    // Active style descriptor (workstream-G seam). One style today; its
+    // shader-side constants are injected into the building fragment shader
+    // at compile, its palette is read by the layout generator.
+    this.style = config.style || DEFAULT_STYLE;
 
     // Pulse-reaction state. Initialized before GL work so the wave fields
     // exist even if shader compilation throws — keeps react() callable
     // (as a no-op against a never-rendered scene) without a crash.
     this._initWaveState();
 
-    // Compile shaders
-    this.buildingShader = createShaderProgram(gl, BUILDING_VERT, BUILDING_FRAG);
+    // Compile shaders. The building fragment shader gets the active style's
+    // GLSL prelude injected at the `//__STYLE__` marker.
+    this.buildingShader = createShaderProgram(gl, BUILDING_VERT, composeBuildingFrag(styleFragGLSL(this.style)));
     this.groundShader = createShaderProgram(gl, GROUND_VERT, GROUND_FRAG);
     this.lightShader = createShaderProgram(gl, LIGHT_VERT, LIGHT_FRAG);
 
@@ -332,6 +342,7 @@ class City {
     gl.uniform3fv(sh.uniform('u_lightColor'), this.lightColor);
     gl.uniform1f(sh.uniform('u_facadeVariety'), this.facadeVariety);
     gl.uniform1f(sh.uniform('u_lightFill'), this.lightFill);
+    gl.uniform1f(sh.uniform('u_patternVariety'), this.patternVariety);
     gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
     gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
 
@@ -487,6 +498,7 @@ class City {
     if (config.allowCylinder !== undefined && config.allowCylinder !== this.allowCylinder) { this.allowCylinder = config.allowCylinder; needsRebuild = true; }
     if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;
     if (config.lightFill !== undefined) this.lightFill = config.lightFill;
+    if (config.patternVariety !== undefined) this.patternVariety = config.patternVariety;
     if (config.lightRatio !== undefined) this.lightRatio = config.lightRatio;
     if (config.windowScale !== undefined) this.windowScale = config.windowScale;
     if (config.floorHeight !== undefined) this.floorHeight = config.floorHeight;
@@ -503,6 +515,7 @@ class City {
   setModulatedValues(config) {
     if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;
     if (config.lightFill !== undefined) this.lightFill = config.lightFill;
+    if (config.patternVariety !== undefined) this.patternVariety = config.patternVariety;
     if (config.lightRatio !== undefined) this.lightRatio = config.lightRatio;
     if (config.windowScale !== undefined) this.windowScale = config.windowScale;
     if (config.streetGlow !== undefined) this.streetGlow = config.streetGlow;

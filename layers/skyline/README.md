@@ -69,7 +69,7 @@ Drive the camera with WASD (move), arrow keys (look around), `=` / `-`
 | `footprintVariety` | Fraction of buildings that get a non-box footprint. Bevels and chops are common; the `allowEll` / `allowCylinder` toggles gate the rare L-shapes and very-rare round towers. `0` = an all-rectangular skyline. |
 | `silhouetteVariety` | Rebuild param. Fraction of mid/tall buildings given richer massing than the classic single taper: tiered wedding-cake setbacks, podium-and-tower profiles, and thin-slab / square-point aspect mixes. At `>0` the tallest building also grows its spire (stubbed out and unrendered until now) and a few towers sprout antenna needles — both gated so `0` keeps classic's flat-topped tallest exactly as it was. |
 | `streetStyle` | `glow` (classic warm pools) or `paved` (asphalt streets on the building grid: lane dashes, sidewalks, crosswalks, streetlights). Switching regenerates streetlight + car geometry, so it reflows briefly. `streetGlow` controls the roadway lighting level in `paved` style. |
-| `traffic` / `carSpeed` | Live. `traffic` is car density (`0` = none); `carSpeed` scales their speed. Cars only appear with `streetStyle: paved`. Positions are computed on the GPU from time, so both are cheap to animate — bind `carSpeed` (or `traffic`) to audio for traffic that surges with the music. |
+| `traffic` / `carSpeed` | Live. `traffic` is car density (`0` = none); `carSpeed` scales their speed. Cars only appear with `streetStyle: paved`. They advance block-by-block with stop-and-go at intersections (some cars catch a red light and wait) — slow city traffic, not streaking lights. Positions are computed on the GPU from time, so both are cheap to animate — bind `carSpeed` (or `traffic`) to audio for traffic that surges with the music. |
 | `facadeVariety` | Live (no rebuild) — the window-facade style is chosen per building in the shader. `0` = every building has standard punched windows; raising it blends in small-gap and full-glass curtain-wall facades. |
 | `patternVariety` | Live (no rebuild) — fraction of building *faces* drawn from the pattern pool (mullioned curtain wall, ribbon, vertical strips, spandrel floors). Hashed per face, so corner towers mix cladding; pattern buildings also split into floor-lit offices and scatter-lit residential. `0` = the classic facade mix only, rendered bit-identically. Distinct from `facadeVariety`, which only varies window *margins*. |
 | `lightFill` | Live — how much of each window pane actually emits light. `1` ≈ the whole pane glows (continuous-glass look on curtain walls); lower leaves a dim glass surround with a smaller lit rectangle inside, so the light reads smaller than the window. |
@@ -84,12 +84,14 @@ skyline/
     city.js            Procedural city + render orchestration
     layout.js          Building grid generator
     style.js           Per-style aesthetic descriptors + shader-inject prelude
+    traffic.js         Traffic subsystem — deterministic car lanes over the road grid
     geometry.js        Building / roof / light geometry
-    shaders.js         The three GLSL programs + style composer
+    shaders.js         The four GLSL programs (building, ground, light, car) + composers
     gl-utils.js        Shader compile / VBO helpers
     math.js            Mat4 / vec3 helpers (column-major Float32Array, WebGL convention)
     layout.test.js     Layout determinism + classic-layout regression (plain node)
     style.test.js      Style descriptor shape + shader injection (plain node)
+    traffic.test.js    Car lane generation: determinism, bounds, alignment (plain node)
     adapter.test.js    configFromParams plumbing (plain node)
 ```
 

@@ -38,6 +38,7 @@ import {
 } from './shaders.js';
 import { DEFAULT_STYLE, styleFragGLSL } from './style.js';
 import { mulberry32, generateLayout } from './layout.js';
+import { generateTrafficLanes, roadCentres, CAR_FLOATS } from './traffic.js';
 import { buildFootprintPolygon, generatePrism, generateRoofTri, generateRoofQuad } from './geometry.js';
 
 // ============================================================================
@@ -263,46 +264,23 @@ class City {
     }
 
     // ── Street level (workstream C): streetlights + cars, paved only ──
-    // Both align to the road grid (road centres sit half a cell off the
-    // building grid lines, matching the ground shader). Generated whenever
-    // streetStyle is paved; traffic / carSpeed then animate the cars via
-    // uniforms with no rebuild. Cars work in classic and (later) endless.
-    const carBuf = [];
+    // Streetlights sit at each road intersection; cars come from the traffic
+    // subsystem (lib/traffic.js) — pure + deterministic, so the same call
+    // shape drops onto a per-tile region in endless mode. Both use the shared
+    // roadCentres() grid so lights and lanes always align. traffic / carSpeed
+    // then animate the fleet via uniforms with no rebuild.
+    let carData = null;
     if (this.streetStyle >= 0.5) {
       const sp = this.spacing;
       const halfW = this.citySize[0] * 0.5, halfD = this.citySize[1] * 0.5;
       const lc = this.style.street.lightColor;
-      const roadHalf = sp * 0.20, laneOff = roadHalf * 0.45;
-      const carRng = mulberry32((this.seed ^ 0x9e3779b9) >>> 0);
-
-      // Road centres: x (or z) where mod(coord, sp) == sp*0.5.
-      const firstX = Math.ceil((-halfW) / sp + 0.5) * sp - sp * 0.5;
-      const firstZ = Math.ceil((-halfD) / sp + 0.5) * sp - sp * 0.5;
-      const CARS_PER_ROAD = 6;
-
-      // Roads running in z (constant x). A streetlight at each intersection,
-      // cars streaming both directions in offset lanes.
-      for (let cx = firstX; cx <= halfW; cx += sp) {
-        for (let cz = firstZ; cz <= halfD; cz += sp) {
+      const cxs = roadCentres(halfW, sp), czs = roadCentres(halfD, sp);
+      for (const cx of cxs) {
+        for (const cz of czs) {
           lightBuf.push(cx, 0.9, cz, -1.0, lc[0], lc[1], lc[2]);  // steady warm streetlight
         }
-        for (let i = 0; i < CARS_PER_ROAD; i++) {
-          const dir = carRng() < 0.5 ? 1 : -1;
-          const oz = dir > 0 ? -halfD : halfD;
-          // origin, lane(dirX,dirZ,len,phase), meta(speed,colorFlag,vis)
-          carBuf.push(cx + dir * laneOff, oz, 0, dir, halfD * 2,
-            carRng(), 0.05 + carRng() * 0.13, dir > 0 ? 1 : 0, carRng());
-        }
       }
-      // Roads running in x (constant z).
-      for (let cz = firstZ; cz <= halfD; cz += sp) {
-        for (let i = 0; i < CARS_PER_ROAD; i++) {
-          const dir = carRng() < 0.5 ? 1 : -1;
-          const ox = dir > 0 ? -halfW : halfW;
-          carBuf.push(ox, cz + dir * laneOff, dir, 0, halfW * 2,
-            carRng(), 0.05 + carRng() * 0.13, dir > 0 ? 1 : 0, carRng());
-        }
-      }
+      carData = generateTrafficLanes({ halfW, halfD, spacing: sp, seed: this.seed });
     }
 
     // Build VBOs
@@ -333,10 +311,10 @@ class City {
     this.lightCount = lightBuf.length / 7;
     this.lightVBO = lightBuf.length > 0 ? createBuffer(gl, this.lightData) : null;
 
-    // Car points: 9 floats each (origin2 + lane4 + meta3)
-    this.carData = new Float32Array(carBuf);
-    this.carCount = carBuf.length / 9;
-    this.carVBO = carBuf.length > 0 ? createBuffer(gl, this.carData) : null;
+    // Car points (from the traffic subsystem): CAR_FLOATS each.
+    this.carData = carData || new Float32Array(0);
+    this.carCount = this.carData.length / CAR_FLOATS;
+    this.carVBO = this.carData.length > 0 ? createBuffer(gl, this.carData) : null;
   }
 
   update(dt) {
@@ -437,6 +415,7 @@ class City {
       gl.uniform1f(sh.uniform('u_time'), this.time);
       gl.uniform1f(sh.uniform('u_carSpeed'), this.carSpeed);
       gl.uniform1f(sh.uniform('u_traffic'), this.traffic);
+      gl.uniform1f(sh.uniform('u_spacing'), this.spacing);
       gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
       gl.uniform1f(sh.uniform('u_pointScale'), 220);
       gl.uniform1f(sh.uniform('u_curvature'), this.curvature);

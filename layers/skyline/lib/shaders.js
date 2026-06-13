@@ -389,20 +389,33 @@ export const GROUND_FRAG = `
     bool onRoad = roadAlongZ || roadAlongX;
     bool intersection = roadAlongZ && roadAlongX;
 
+    // Crosswalk band depth: a zebra crossing sits just outside the intersection
+    // box on each approach. Four approaches ⇒ up to four crosswalks per 4-way.
+    float crossBand = roadHalf + sp * 0.07;
     vec3 col;
     if (onRoad) {
       col = STREET_ASPHALT;
       if (intersection) {
-        // crosswalk ladder striping inside the intersection box
-        float barX = step(0.6, fract(v_pos.x / (sp * 0.07)));
-        float barZ = step(0.6, fract(v_pos.y / (sp * 0.07)));
-        col = mix(col, STREET_CROSSWALK, max(barX, barZ) * 0.4);
+        // clean intersection interior — no markings
       } else if (roadAlongZ) {
-        float dash = step(abs(rx), sp * 0.015) * step(0.5, fract(v_pos.y / (sp * 0.5)));
-        col = mix(col, STREET_MARKING, dash);
+        // z-running road. Within a crosswalk band (just past the intersection
+        // in z, spanning the road width in x) draw a zebra; else a centre dash.
+        if (abs(rz) < crossBand) {
+          float zebra = step(0.45, fract(v_pos.x / (sp * 0.09)));
+          col = mix(col, STREET_CROSSWALK, zebra * 0.7);
+        } else {
+          float dash = step(abs(rx), sp * 0.015) * step(0.5, fract(v_pos.y / (sp * 0.5)));
+          col = mix(col, STREET_MARKING, dash);
+        }
       } else {
-        float dash = step(abs(rz), sp * 0.015) * step(0.5, fract(v_pos.x / (sp * 0.5)));
-        col = mix(col, STREET_MARKING, dash);
+        // x-running road
+        if (abs(rx) < crossBand) {
+          float zebra = step(0.45, fract(v_pos.y / (sp * 0.09)));
+          col = mix(col, STREET_CROSSWALK, zebra * 0.7);
+        } else {
+          float dash = step(abs(rz), sp * 0.015) * step(0.5, fract(v_pos.x / (sp * 0.5)));
+          col = mix(col, STREET_MARKING, dash);
+        }
       }
     } else if (abs(rx) < roadHalf + walkW || abs(rz) < roadHalf + walkW) {
       col = STREET_SIDEWALK;
@@ -474,25 +487,41 @@ export const LIGHT_FRAG = `
 // threshold (compared against u_traffic to fade the fleet in/out).
 export const CAR_VERT = CURVE_GLSL + `
   attribute vec2 a_origin;   // lane start (x, z)
-  attribute vec4 a_lane;     // dirX, dirZ, length, phase
-  attribute vec3 a_meta;     // speed, colorFlag (1 = head, 0 = tail), visThreshold
+  attribute vec4 a_lane;     // dirX, dirZ, length, startPhase (0..1)
+  attribute vec3 a_meta;     // speed (cells/sec), colorFlag (1 = head, 0 = tail), visThreshold
   uniform mat4 u_viewProj;
   uniform float u_time;
   uniform float u_carSpeed;
   uniform float u_traffic;
+  uniform float u_spacing;   // block size = one cell along a lane
   uniform float u_pointScale;
   varying float v_kind;
+
+  float carHash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 13758.5453); }
+
   void main() {
     if (a_meta.z > u_traffic) {   // culled when traffic density is below this car's threshold
       gl_PointSize = 0.0;
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → clipped
       return;
     }
-    float t = fract(a_lane.w + u_time * a_meta.x * u_carSpeed);
-    vec2 pos2 = a_origin + a_lane.xy * (t * a_lane.z);
+    // Stop-and-go: a car advances one block (cell) per cycle. Speed is in
+    // cells/sec, so it's grid-relative and reads as slow city traffic, not a
+    // streaking light. At each cell boundary a per-car/per-cell hash decides
+    // a "red light": stoppers cross 62% of the cycle then wait out the rest.
+    // smoothstep eases the accel out of a stop and the decel into the next.
+    float sp = u_spacing;
+    float global = a_lane.w * (a_lane.z / sp) + u_time * a_meta.x * u_carSpeed;
+    float cell = floor(global);
+    float local = fract(global);
+    float red = step(carHash(vec2(a_lane.w * 53.0 + a_meta.x * 17.0, cell)), 0.4);
+    float moveFrac = mix(1.0, 0.62, red);
+    float prog = smoothstep(0.0, 1.0, clamp(local / moveFrac, 0.0, 1.0));
+    float along = mod((cell + prog) * sp, a_lane.z);
+    vec2 pos2 = a_origin + a_lane.xy * along;
     vec3 curved = curvePosition(vec3(pos2.x, 0.3, pos2.y));
     vec4 clip = u_viewProj * vec4(curved, 1.0);
-    gl_PointSize = clamp(u_pointScale / clip.w, 2.0, 16.0);
+    gl_PointSize = clamp(u_pointScale / clip.w, 2.0, 14.0);
     gl_Position = clip;
     v_kind = a_meta.y;
   }

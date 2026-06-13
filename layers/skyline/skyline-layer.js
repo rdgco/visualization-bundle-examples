@@ -25,7 +25,7 @@ import City, { parseColorGL } from './lib/city.js';
 
 export const key = 'skyline';
 export const label = 'City Skyline';
-export const description = 'Procedural night-time city skyline. Hundreds of buildings with a configurable mix of footprints (boxes, beveled/chopped corners, rare L-shapes and round towers) and window facades (standard punched, small-gap, and full-glass curtain walls), with lit windows whose glow can fill the pane or sit inset within it, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane with street glow. Pattern variety layers in real facade types — mullioned curtain walls, ribbon and vertical-strip windows, alternating spandrel floors — hashed per face and split into floor-lit offices and scatter-lit residential. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
+export const description = 'Procedural night-time city skyline. Hundreds of buildings with a configurable mix of footprints (boxes, beveled/chopped corners, rare L-shapes and round towers) and window facades (standard punched, small-gap, and full-glass curtain walls), with lit windows whose glow can fill the pane or sit inset within it, rooftop features, red aviation lights blinking on the tallest spires, and a ground plane that can switch from classic glow pools to paved streets — asphalt with lane markings, sidewalks, crosswalks, warm streetlights, and GPU-animated traffic (white headlight and red taillight streams). Pattern variety layers in real facade types — mullioned curtain walls, ribbon and vertical-strip windows, alternating spandrel floors — hashed per face and split into floor-lit offices and scatter-lit residential. Built on three GLSL shader programs sharing one canvas; driven by the harness orbit camera. Demonstrates the full WebGL contract surface, all param kinds, the `pulse` reaction with three entry strategies, and `wantsCamera` opt-in.';
 export const wantsContext = 'webgl';
 
 /**
@@ -163,6 +163,13 @@ export const params = {
     default: true,
     description: 'Permit very rare round-tower footprints in the exotic mix. Regenerates the skyline.'
   },
+  streetStyle: {
+    type: 'enum',
+    label: 'Street style',
+    options: ['glow', 'paved'],
+    default: 'glow',
+    description: 'Ground treatment. glow = the classic warm glow pools between buildings. paved = real streets aligned to the building grid — asphalt with dashed lane lines, sidewalks, crosswalks at intersections, plus warm streetlights. Switching regenerates streetlight + car geometry.'
+  },
   streetGlow: {
     type: 'number',
     label: 'Street glow',
@@ -170,7 +177,27 @@ export const params = {
     min: 0,
     max: 1,
     step: 0.01,
-    description: 'Brightness of the ground-level glow between buildings.',
+    description: 'Brightness of the ground-level lighting — the glow pools in glow style, the roadway lighting / streetlight level in paved style.',
+    modulation: { kind: 'continuous' }
+  },
+  traffic: {
+    type: 'number',
+    label: 'Traffic',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Density of moving cars on the streets (paved style). 0 = none; raising it fades in streams of white headlights one way and red taillights the other. Car motion is computed on the GPU, so this is free to animate and modulate.',
+    modulation: { kind: 'continuous' }
+  },
+  carSpeed: {
+    type: 'number',
+    label: 'Car speed',
+    default: 1,
+    min: 0.2,
+    max: 3,
+    step: 0.05,
+    description: 'Speed multiplier for the traffic. Bind it to audio to make the cars surge with the music.',
     modulation: { kind: 'continuous' }
   },
   colorVariance: {
@@ -276,6 +303,9 @@ export function configFromParams(params) {
     silhouetteVariety: params.silhouetteVariety,
     allowEll: params.allowEll,
     allowCylinder: params.allowCylinder,
+    streetStyle: params.streetStyle,
+    traffic: params.traffic,
+    carSpeed: params.carSpeed,
     streetGlow: params.streetGlow,
     colorVariance: params.colorVariance,
     sunIntensity: params.sunIntensity,

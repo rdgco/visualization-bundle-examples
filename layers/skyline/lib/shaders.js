@@ -347,35 +347,113 @@ export const GROUND_VERT = CURVE_GLSL + `
 
 export const GROUND_FRAG = `
   precision mediump float;
+  //__STYLE__
   varying vec2 v_pos;
   uniform float u_streetGlow;
   uniform float u_sunIntensity;
   uniform float u_spacing;
   uniform vec2  u_citySize;
+  uniform float u_streetStyle;   // 0 = classic glow, 1 = paved streets
+
+  float gHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
   void main() {
     float nightAmb = 1.0 - u_sunIntensity * 0.6;
-    vec3 base = vec3(0.012,0.014,0.02) * nightAmb + vec3(0.15,0.16,0.14) * u_sunIntensity;
     vec2 rel = v_pos / (u_citySize * 0.5);
     float inCity = 1.0 - smoothstep(0.7, 1.1, max(abs(rel.x), abs(rel.y)));
-    vec2 cell = mod(v_pos + u_spacing * 0.5, u_spacing);
-    float d = length(cell - u_spacing * 0.5);
-    float pool = exp(-d*d*0.4) * 0.7;
-    float sx = abs(cell.x - u_spacing*0.5), sz = abs(cell.y - u_spacing*0.5);
-    float lineGlow = exp(-min(sx,sz)*min(sx,sz)*1.0) * 0.22;
-    float totalGlow = (pool + lineGlow) * u_streetGlow * inCity * nightAmb;
-    vec3 glow = vec3(1.0,0.78,0.42) * totalGlow + vec3(0.5,0.4,0.25) * u_streetGlow * 0.03 * inCity * nightAmb;
-    gl_FragColor = vec4(base + glow, 1.0);
+
+    if (u_streetStyle < 0.5) {
+      // ── Classic glow ground (unchanged) ──
+      vec3 base = vec3(0.012,0.014,0.02) * nightAmb + vec3(0.15,0.16,0.14) * u_sunIntensity;
+      vec2 cell = mod(v_pos + u_spacing * 0.5, u_spacing);
+      float d = length(cell - u_spacing * 0.5);
+      float pool = exp(-d*d*0.4) * 0.7;
+      float sx = abs(cell.x - u_spacing*0.5), sz = abs(cell.y - u_spacing*0.5);
+      float lineGlow = exp(-min(sx,sz)*min(sx,sz)*1.0) * 0.22;
+      float totalGlow = (pool + lineGlow) * u_streetGlow * inCity * nightAmb;
+      vec3 glow = vec3(1.0,0.78,0.42) * totalGlow + vec3(0.5,0.4,0.25) * u_streetGlow * 0.03 * inCity * nightAmb;
+      gl_FragColor = vec4(base + glow, 1.0);
+      return;
+    }
+
+    // ── Paved streets ── roads run between building rows (half a cell off
+    // the building grid lines); sidewalks border them; block interiors fill
+    // the rest. Marking / crosswalk colors come from the style descriptor.
+    float sp = u_spacing;
+    float rx = mod(v_pos.x, sp) - sp * 0.5;
+    float rz = mod(v_pos.y, sp) - sp * 0.5;
+    float roadHalf = sp * 0.20;
+    float walkW    = sp * 0.07;
+    bool roadAlongZ = abs(rx) < roadHalf;   // road running in z
+    bool roadAlongX = abs(rz) < roadHalf;   // road running in x
+    bool onRoad = roadAlongZ || roadAlongX;
+    bool intersection = roadAlongZ && roadAlongX;
+
+    // Crosswalk band depth: a faint zebra crossing sits just outside the
+    // intersection box on each approach (up to four per 4-way intersection).
+    float crossBand = roadHalf + sp * 0.045;
+    vec3 col;
+    if (onRoad) {
+      col = STREET_ASPHALT;
+      if (intersection) {
+        // clean intersection interior — no markings
+      } else if (roadAlongZ) {
+        // z-running road. Within a crosswalk band (just past the intersection
+        // in z, spanning the road width in x) draw a zebra; else a centre dash.
+        if (abs(rz) < crossBand) {
+          float zebra = step(0.45, fract(v_pos.x / (sp * 0.09)));
+          col = mix(col, STREET_CROSSWALK, zebra * 0.3);
+        } else {
+          float dash = step(abs(rx), sp * 0.015) * step(0.5, fract(v_pos.y / (sp * 0.5)));
+          col = mix(col, STREET_MARKING, dash);
+        }
+      } else {
+        // x-running road
+        if (abs(rx) < crossBand) {
+          float zebra = step(0.45, fract(v_pos.y / (sp * 0.09)));
+          col = mix(col, STREET_CROSSWALK, zebra * 0.3);
+        } else {
+          float dash = step(abs(rz), sp * 0.015) * step(0.5, fract(v_pos.x / (sp * 0.5)));
+          col = mix(col, STREET_MARKING, dash);
+        }
+      }
+    } else if (abs(rx) < roadHalf + walkW || abs(rz) < roadHalf + walkW) {
+      col = STREET_SIDEWALK;
+    } else {
+      float blk = gHash(floor(v_pos / sp));
+      col = STREET_ASPHALT * (0.6 + 0.5 * blk);
+    }
+
+    // Night lighting + warm glow pooled on the roadway (driven by streetGlow),
+    // brighter at intersections; daylight wash on top.
+    float lit = 0.28 + 0.72 * nightAmb;
+    float roadGlow = onRoad ? (0.08 + 0.16 * float(intersection)) * u_streetGlow : 0.0;
+    vec3 outc = col * lit + vec3(1.0, 0.82, 0.5) * roadGlow * nightAmb;
+    outc += col * u_sunIntensity * 0.4;
+
+    // Fade to dark ground beyond the city footprint (classic single block).
+    vec3 baseDark = vec3(0.012,0.014,0.02) * nightAmb + vec3(0.10,0.11,0.10) * u_sunIntensity;
+    gl_FragColor = vec4(mix(baseDark, outc, inCity), 1.0);
   }
 `;
+
+// Inject a style's GLSL prelude into the ground fragment shader (street
+// color #defines), mirroring composeBuildingFrag.
+export function composeGroundFrag(styleGLSL = '') {
+  return GROUND_FRAG.replace('//__STYLE__', styleGLSL);
+}
 
 export const LIGHT_VERT = CURVE_GLSL + `
   attribute vec3 a_position;
   attribute float a_phase;
+  attribute vec3 a_color;     // per-point color: red aviation, warm-white streetlight
   uniform mat4 u_viewProj;
   uniform float u_pointScale;
   varying float v_phase;
+  varying vec3 v_color;
   void main() {
     v_phase = a_phase;
+    v_color = a_color;
     vec3 curved = curvePosition(a_position);
     vec4 clip = u_viewProj * vec4(curved, 1.0);
     gl_PointSize = clamp(u_pointScale / clip.w, 6.0, 60.0);
@@ -388,14 +466,80 @@ export const LIGHT_FRAG = `
   uniform float u_time;
   uniform float u_sunIntensity;
   varying float v_phase;
+  varying vec3 v_color;
   void main() {
     float d = length(gl_PointCoord - 0.5);
     if (d > 0.5) discard;
     float core = exp(-d * 12.0), glow = exp(-d * 3.0);
     float combined = core * 1.5 + glow * 0.6;
+    // phase < 0 ⇒ steady (aviation "always on" + streetlights); else blink.
     float pulse = v_phase < 0.0 ? 1.0 : 0.08 + 0.92 * smoothstep(0.4, 0.5, fract(u_time * 0.5 + v_phase));
     float vis = 0.3 + 0.7 * (1.0 - u_sunIntensity);
-    vec3 col = vec3(1.0, 0.04, 0.02) * combined * pulse * vis;
+    vec3 col = v_color * combined * pulse * vis;
     gl_FragColor = vec4(col, combined * (0.5 + 0.5 * pulse) * vis);
+  }
+`;
+
+// ── Cars ── point sprites whose lane position is computed in the vertex
+// shader from u_time, so a whole fleet animates with zero per-frame CPU.
+// Each car carries a lane (origin + direction + length), a phase, a speed,
+// a color flag (headlight white vs taillight red) and a visibility
+// threshold (compared against u_traffic to fade the fleet in/out).
+export const CAR_VERT = CURVE_GLSL + `
+  attribute vec2 a_origin;   // lane start (x, z)
+  attribute vec4 a_lane;     // dirX, dirZ, length, startPhase (0..1)
+  attribute vec3 a_meta;     // speed (cells/sec), colorFlag (1 = head, 0 = tail), visThreshold
+  uniform mat4 u_viewProj;
+  uniform float u_time;
+  uniform float u_carSpeed;
+  uniform float u_traffic;
+  uniform float u_spacing;   // block size = one cell along a lane
+  uniform float u_pointScale;
+  varying float v_kind;
+
+  float carHash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 13758.5453); }
+
+  void main() {
+    if (a_meta.z > u_traffic) {   // culled when traffic density is below this car's threshold
+      gl_PointSize = 0.0;
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → clipped
+      return;
+    }
+    // Stop-and-go: a car advances one block (cell) per cycle. Speed is in
+    // cells/sec, so it's grid-relative and reads as slow city traffic, not a
+    // streaking light. At each cell boundary a per-car/per-cell hash decides
+    // a "red light": stoppers cross 62% of the cycle then wait out the rest.
+    // smoothstep eases the accel out of a stop and the decel into the next.
+    float sp = u_spacing;
+    float global = a_lane.w * (a_lane.z / sp) + u_time * a_meta.x * u_carSpeed;
+    float cell = floor(global);
+    float local = fract(global);
+    float red = step(carHash(vec2(a_lane.w * 53.0 + a_meta.x * 17.0, cell)), 0.4);
+    float moveFrac = mix(1.0, 0.62, red);
+    float prog = smoothstep(0.0, 1.0, clamp(local / moveFrac, 0.0, 1.0));
+    float along = mod((cell + prog) * sp, a_lane.z);
+    vec2 pos2 = a_origin + a_lane.xy * along;
+    vec3 curved = curvePosition(vec3(pos2.x, 0.3, pos2.y));
+    vec4 clip = u_viewProj * vec4(curved, 1.0);
+    gl_PointSize = clamp(u_pointScale / clip.w, 2.0, 14.0);
+    gl_Position = clip;
+    v_kind = a_meta.y;
+  }
+`;
+
+export const CAR_FRAG = `
+  precision mediump float;
+  uniform float u_sunIntensity;
+  uniform vec3 u_carHead;
+  uniform vec3 u_carTail;
+  varying float v_kind;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    if (d > 0.5) discard;
+    float core = exp(-d * 10.0), halo = exp(-d * 3.5);
+    float b = core * 1.6 + halo * 0.5;
+    float vis = 0.4 + 0.6 * (1.0 - u_sunIntensity);
+    vec3 col = (v_kind > 0.5 ? u_carHead : u_carTail) * b * vis;
+    gl_FragColor = vec4(col, b * vis);
   }
 `;

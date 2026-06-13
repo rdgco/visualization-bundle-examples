@@ -11,7 +11,7 @@
 
 import assert from 'node:assert';
 import { CONTEMPORARY, DEFAULT_STYLE, styleFragGLSL } from './style.js';
-import { composeBuildingFrag } from './shaders.js';
+import { composeBuildingFrag, composeGroundFrag } from './shaders.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -44,6 +44,11 @@ test('contemporary descriptor has the expected shape', () => {
   assert.ok(m.tierShrink[0] <= m.tierShrink[1]);
   assert.strictEqual(m.podiumScale.length, 2);
   assert.ok(m.aspectBias >= 0 && m.aspectBias <= 1);
+  // Street colors (workstream C).
+  const s = CONTEMPORARY.street;
+  for (const key of ['asphalt', 'sidewalk', 'marking', 'crosswalk', 'lightColor', 'carHead', 'carTail']) {
+    assert.strictEqual(s[key].length, 3, `street.${key}`);
+  }
 });
 
 test('DEFAULT_STYLE is the contemporary descriptor', () => {
@@ -58,6 +63,13 @@ test('styleFragGLSL emits the four tint defines with the contemporary values', (
   assert.match(glsl, /#define STYLE_TINT_COOL\s+vec3\(0\.5500, 0\.6500, 1\.0000\)/);
   assert.match(glsl, /#define STYLE_TINT_GREEN\s+vec3\(0\.7000, 1\.0000, 0\.7000\)/);
   assert.match(glsl, /#define STYLE_TINT_WHITE\s+vec3\(1\.0000, 0\.9500, 0\.8500\)/);
+});
+
+test('styleFragGLSL emits the street color defines', () => {
+  const glsl = styleFragGLSL();
+  for (const name of ['STREET_ASPHALT', 'STREET_SIDEWALK', 'STREET_MARKING', 'STREET_CROSSWALK']) {
+    assert.match(glsl, new RegExp(`#define ${name}\\s+vec3\\(`), name);
+  }
 });
 
 test('styleFragGLSL has no leftover template tokens', () => {
@@ -80,6 +92,14 @@ test('composeBuildingFrag with no style still produces valid-ish source', () => 
   const frag = composeBuildingFrag('');
   assert.ok(!frag.includes('//__STYLE__'));
   assert.ok(frag.includes('void main()'));
+});
+
+test('composeGroundFrag injects street defines and exposes the paved branch', () => {
+  const frag = composeGroundFrag(styleFragGLSL());
+  assert.ok(!frag.includes('//__STYLE__'), 'marker replaced');
+  assert.ok(frag.includes('#define STREET_ASPHALT'), 'street defines injected');
+  assert.ok(frag.includes('u_streetStyle'), 'street-style uniform present');
+  assert.ok(frag.includes('u_streetStyle < 0.5'), 'classic branch preserved');
 });
 
 console.log(`\n${passed} passed\n`);

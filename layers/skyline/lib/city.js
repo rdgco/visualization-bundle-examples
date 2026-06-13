@@ -94,6 +94,7 @@ class City {
     this.facadeVariety = config.facadeVariety ?? 0.5;
     this.lightFill = config.lightFill ?? 0.8;
     this.patternVariety = config.patternVariety ?? 0.0;
+    this.silhouetteVariety = config.silhouetteVariety ?? 0.0;
 
     // Active style descriptor (workstream-G seam). One style today; its
     // shader-side constants are injected into the building fragment shader
@@ -127,7 +128,8 @@ class City {
     const layout = generateLayout(rng, {
       density: this.density, maxHeight: this.maxHeight,
       footprintVariety: this.footprintVariety,
-      allowEll: this.allowEll, allowCylinder: this.allowCylinder
+      allowEll: this.allowEll, allowCylinder: this.allowCylinder,
+      silhouetteVariety: this.silhouetteVariety, style: this.style
     });
     this.citySize = layout.citySize;
     this.spacing = layout.spacing;
@@ -141,9 +143,22 @@ class City {
       if (b.h > tallestH) { tallestH = b.h; tallestId = b.id; }
       const cr = Math.cos(b.rot), sr = Math.sin(b.rot);
 
-      // Expand taper segments
+      // Expand into stacked segments. Three sources, in priority order:
+      //   - b.massing (workstream B): a multi-tier setback / podium spec,
+      //     present only when silhouetteVariety > 0.
+      //   - b.taper (classic): the single shrink-on-top profile.
+      //   - neither: one full-height box.
+      // Offsets are fractions of the base footprint, rotated into world space.
       const segments = [];
-      if (!b.taper) {
+      if (b.massing) {
+        for (const s of b.massing.segments) {
+          const y0 = b.h * s.y0;
+          const lox = s.ox * b.w, loz = s.oz * b.d;
+          const wox = lox * cr - loz * sr, woz = lox * sr + loz * cr;
+          segments.push({ x: b.x + wox, z: b.z + woz, y: y0,
+            w: b.w * s.sw, h: b.h * (s.y1 - s.y0), d: b.d * s.sd });
+        }
+      } else if (!b.taper) {
         segments.push({x: b.x, z: b.z, y: 0, w: b.w, h: b.h, d: b.d});
       } else {
         const t = b.taper;
@@ -208,10 +223,27 @@ class City {
         generateRoofTri(roofBuf, RP(0.5, topY, 0.5), RP(-0.5, topY, 0.5), apex, roofCol);
         generateRoofTri(roofBuf, RP(-0.5, topY, 0.5), RP(-0.5, topY, -0.5), apex, roofCol);
         topmost = topY + rh;
+      } else if (roofType === 'spire' || roofType === 'antenna') {
+        // Crown features (workstream B), gated behind silhouetteVariety so
+        // classic renders the tallest/exotic tops flat exactly as before.
+        // Both are tri-fans from a small square base ring to a high apex —
+        // a spire is stubbier and wider, an antenna a thin needle. Drawn as
+        // roof triangles (faceV ~1 ⇒ the window branch never lights them).
+        if (this.silhouetteVariety > 0) {
+          const isSpire = roofType === 'spire';
+          const baseR = isSpire ? 0.14 : 0.05;
+          const featH = isSpire ? (1.4 + b.roofRng * 2.4) : (1.0 + b.roofRng * 2.2);
+          const apex = RP(0, topY + featH, 0);
+          const ring = [[-baseR, -baseR], [baseR, -baseR], [baseR, baseR], [-baseR, baseR]];
+          for (let k = 0; k < 4; k++) {
+            const a = ring[k], c = ring[(k + 1) % 4];
+            generateRoofTri(roofBuf, RP(a[0], topY, a[1]), RP(c[0], topY, c[1]), apex, roofCol);
+          }
+          topmost = topY + featH;
+        }
       }
-      // spire and antenna omitted for brevity — add same pattern as POC
 
-      // Aviation lights on tall buildings
+      // Aviation lights on tall buildings — now sit atop any spire/antenna.
       if (b.h > this.maxHeight * 0.45) {
         lightBuf.push(top.x, topmost + 0.05, top.z, b.roofRng > 0.4 ? b.roofRng : -1.0);
       }
@@ -494,6 +526,7 @@ class City {
     if (config.density !== undefined && config.density !== this.density) { this.density = config.density; needsRebuild = true; }
     if (config.maxHeight !== undefined && config.maxHeight !== this.maxHeight) { this.maxHeight = config.maxHeight; needsRebuild = true; }
     if (config.footprintVariety !== undefined && config.footprintVariety !== this.footprintVariety) { this.footprintVariety = config.footprintVariety; needsRebuild = true; }
+    if (config.silhouetteVariety !== undefined && config.silhouetteVariety !== this.silhouetteVariety) { this.silhouetteVariety = config.silhouetteVariety; needsRebuild = true; }
     if (config.allowEll !== undefined && config.allowEll !== this.allowEll) { this.allowEll = config.allowEll; needsRebuild = true; }
     if (config.allowCylinder !== undefined && config.allowCylinder !== this.allowCylinder) { this.allowCylinder = config.allowCylinder; needsRebuild = true; }
     if (config.facadeVariety !== undefined) this.facadeVariety = config.facadeVariety;

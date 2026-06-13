@@ -142,6 +142,15 @@ export const params = {
     step: 0.01,
     description: 'Fraction of buildings with a non-box footprint — beveled or chopped corners (common), with the occasional L-shape or round tower. 0 = all rectangular boxes. Regenerates the skyline.'
   },
+  silhouetteVariety: {
+    type: 'number',
+    label: 'Silhouette variety',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    description: 'Fraction of mid/tall buildings given richer massing than the classic single taper — tiered wedding-cake setbacks, podium-and-tower profiles, and thin-slab / square-point aspect mixes. At >0 the tallest building also grows its spire and a few towers sprout antenna needles. 0 = classic profiles only. Regenerates the skyline.'
+  },
   allowEll: {
     type: 'boolean',
     label: 'Allow ell-shaped',
@@ -264,6 +273,7 @@ export function configFromParams(params) {
     density: params.density,
     maxHeight: params.maxHeight,
     footprintVariety: params.footprintVariety,
+    silhouetteVariety: params.silhouetteVariety,
     allowEll: params.allowEll,
     allowCylinder: params.allowCylinder,
     streetGlow: params.streetGlow,

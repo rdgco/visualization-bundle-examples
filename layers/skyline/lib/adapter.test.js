@@ -51,6 +51,14 @@ test('configFromParams forwards patternVariety', () => {
   assert.strictEqual(cfg.patternVariety, 0.6);
 });
 
+test('silhouetteVariety is declared, defaults to classic (0), and is forwarded', () => {
+  const p = params.silhouetteVariety;
+  assert.ok(p && p.type === 'number');
+  assert.strictEqual(p.default, 0);
+  const cfg = configFromParams({ ...declaredDefaults(), silhouetteVariety: 0.8 });
+  assert.strictEqual(cfg.silhouetteVariety, 0.8);
+});
+
 test('declared defaults map to classic flags', () => {
   const cfg = configFromParams(declaredDefaults());
   assert.strictEqual(cfg.patternVariety, 0, 'patternVariety classic');

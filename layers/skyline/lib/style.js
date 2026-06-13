@@ -59,6 +59,19 @@ export const CONTEMPORARY = {
   // hex-grid patterns and add the matching shader branches.
   facade: {
     patterns: ['mullioned', 'ribbon', 'vertical', 'spandrel']
+  },
+
+  // Massing weights (workstream B). `silhouetteVariety` routes a fraction
+  // of mid/tall buildings into richer profiles than the single classic
+  // taper. A future style would re-weight these (sci-fi favoring slim
+  // setback towers, say) or add new massing types + their segment specs.
+  massing: {
+    minHeightFrac: 0.30,   // only buildings taller than maxHeight * this are eligible
+    setbackWeight: 0.55,   // P(tiered setback) vs ...
+    podiumWeight: 0.45,    // ... P(podium + tower); normalized across the two
+    tierShrink: [0.60, 0.80],   // per-tier footprint scale range (setbacks)
+    podiumScale: [0.42, 0.62],  // tower footprint vs podium (podium+tower)
+    aspectBias: 0.35       // P(stretch into a thin slab / square point) at full variety
   }
 };
 

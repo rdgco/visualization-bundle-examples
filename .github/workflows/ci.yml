@@ -69,3 +69,19 @@ jobs:
             node "$t" || fail=1
           done
           exit $fail
+
+      # Layer lib/ tests are plain-node (node:assert) and cover the
+      # GL-independent logic — seeded layout determinism, the classic-layout
+      # regression lock, style descriptors, config plumbing. Layer-level
+      # contract tests that need jest (e.g. vibrations) live at the layer
+      # root and run in the harness, not here. nullglob keeps the loop quiet
+      # when a layer has no lib tests.
+      - name: Run layer lib unit tests
+        run: |
+          shopt -s nullglob
+          fail=0
+          for t in layers/*/lib/*.test.js; do
+            echo "→ $t"
+            node "$t" || fail=1
+          done
+          exit $fail

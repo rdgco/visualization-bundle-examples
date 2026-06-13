@@ -389,9 +389,9 @@ export const GROUND_FRAG = `
     bool onRoad = roadAlongZ || roadAlongX;
     bool intersection = roadAlongZ && roadAlongX;
 
-    // Crosswalk band depth: a zebra crossing sits just outside the intersection
-    // box on each approach. Four approaches ⇒ up to four crosswalks per 4-way.
-    float crossBand = roadHalf + sp * 0.07;
+    // Crosswalk band depth: a faint zebra crossing sits just outside the
+    // intersection box on each approach (up to four per 4-way intersection).
+    float crossBand = roadHalf + sp * 0.045;
     vec3 col;
     if (onRoad) {
       col = STREET_ASPHALT;
@@ -402,7 +402,7 @@ export const GROUND_FRAG = `
         // in z, spanning the road width in x) draw a zebra; else a centre dash.
         if (abs(rz) < crossBand) {
           float zebra = step(0.45, fract(v_pos.x / (sp * 0.09)));
-          col = mix(col, STREET_CROSSWALK, zebra * 0.7);
+          col = mix(col, STREET_CROSSWALK, zebra * 0.3);
         } else {
           float dash = step(abs(rx), sp * 0.015) * step(0.5, fract(v_pos.y / (sp * 0.5)));
           col = mix(col, STREET_MARKING, dash);
@@ -411,7 +411,7 @@ export const GROUND_FRAG = `
         // x-running road
         if (abs(rx) < crossBand) {
           float zebra = step(0.45, fract(v_pos.y / (sp * 0.09)));
-          col = mix(col, STREET_CROSSWALK, zebra * 0.7);
+          col = mix(col, STREET_CROSSWALK, zebra * 0.3);
         } else {
           float dash = step(abs(rz), sp * 0.015) * step(0.5, fract(v_pos.x / (sp * 0.5)));
           col = mix(col, STREET_MARKING, dash);

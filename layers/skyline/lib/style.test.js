@@ -37,6 +37,13 @@ test('contemporary descriptor has the expected shape', () => {
   }
   assert.deepStrictEqual(CONTEMPORARY.facade.patterns,
     ['mullioned', 'ribbon', 'vertical', 'spandrel']);
+  // Massing weights (workstream B).
+  const m = CONTEMPORARY.massing;
+  assert.ok(m.minHeightFrac > 0 && m.minHeightFrac < 1);
+  assert.strictEqual(m.tierShrink.length, 2);
+  assert.ok(m.tierShrink[0] <= m.tierShrink[1]);
+  assert.strictEqual(m.podiumScale.length, 2);
+  assert.ok(m.aspectBias >= 0 && m.aspectBias <= 1);
 });
 
 test('DEFAULT_STYLE is the contemporary descriptor', () => {

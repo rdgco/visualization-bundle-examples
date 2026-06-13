@@ -111,6 +111,11 @@ export function generateLayout(rng, params) {
     allowEll: params.allowEll ?? true,
     allowCylinder: params.allowCylinder ?? true
   };
+  // Workstream B: silhouette variety. At 0 (classic) assignMassing is never
+  // called — see makeB — so the RNG stream is byte-identical to the original
+  // generator and the classic-layout golden holds.
+  const silhouetteVariety = params.silhouetteVariety ?? 0;
+  const style = params.style ?? DEFAULT_STYLE;
   const gridW = Math.round(density * 1.6), gridD = density;
   const halfW = (gridW * spacing) / 2, halfD = (gridD * spacing) / 2;
 
@@ -143,11 +148,55 @@ export function generateLayout(rng, params) {
     return {type: 'oneaxis', taperPoint: tp, shrinkW: rng() > 0.5 ? 0.5 + rng() * 0.2 : 1, shrinkD: rng() > 0.5 ? 1 : 0.5 + rng() * 0.2, offsetX: 0, offsetZ: 0};
   }
 
+  // Richer massing for a variety-scaled fraction of mid/tall buildings:
+  // a stacked-segment spec (tiered setback or podium+tower) that overrides
+  // the single taper in city.js, optionally after biasing the footprint
+  // aspect into a thin slab or square point. Returns null for buildings
+  // that keep their classic profile. Only ever called when variety > 0, so
+  // it consumes no RNG in the classic path.
+  function assignMassing(b) {
+    const m = style.massing;
+    if (b.h < params.maxHeight * m.minHeightFrac) return null;
+    if (rng() >= silhouetteVariety) return null;
+
+    // Aspect bias: stretch one footprint axis, squeeze the other.
+    if (rng() < m.aspectBias) {
+      if (rng() < 0.5) { b.w *= 1.7; b.d *= 0.5; }
+      else { b.w *= 0.5; b.d *= 1.7; }
+    }
+
+    const lerp = (a, c) => a + rng() * (c - a);
+    const total = m.setbackWeight + m.podiumWeight;
+    if (rng() * total < m.setbackWeight) {
+      // Tiered setback (wedding-cake): three concentric stacked tiers.
+      const t1 = 0.32 + rng() * 0.10, t2 = 0.60 + rng() * 0.12;
+      const s1 = lerp(m.tierShrink[0], m.tierShrink[1]);
+      const s2 = s1 * lerp(m.tierShrink[0], m.tierShrink[1]);
+      return { type: 'setback', segments: [
+        { y0: 0,  y1: t1, sw: 1,  sd: 1,  ox: 0, oz: 0 },
+        { y0: t1, y1: t2, sw: s1, sd: s1, ox: 0, oz: 0 },
+        { y0: t2, y1: 1,  sw: s2, sd: s2, ox: 0, oz: 0 }
+      ] };
+    }
+    // Podium + tower: a squat full-width base under a slimmer, possibly
+    // off-centre tower.
+    const podH = 0.12 + rng() * 0.13;
+    const tw = lerp(m.podiumScale[0], m.podiumScale[1]);
+    const ox = (rng() - 0.5) * (1 - tw) * 0.6;
+    const oz = (rng() - 0.5) * (1 - tw) * 0.6;
+    return { type: 'podium', segments: [
+      { y0: 0,    y1: podH, sw: 1,  sd: 1,  ox: 0,  oz: 0 },
+      { y0: podH, y1: 1,    sw: tw, sd: tw, ox,     oz }
+    ] };
+  }
+
   let id = 0;
   function makeB(x, z, h, rot) {
     const b = {x, z, w: 0.85 + rng() * 1.3, d: 0.85 + rng() * 1.3, h, rot, col: pickColor(rng), roofRng: rng(), id: id++};
     b.taper = assignTaper(b);
     b.footprint = pickFootprint(rng, fpCfg);
+    // Gate the whole call on variety so classic draws zero extra RNG.
+    if (silhouetteVariety > 0) b.massing = assignMassing(b);
     return b;
   }
 

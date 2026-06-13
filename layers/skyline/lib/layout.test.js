@@ -95,4 +95,50 @@ test('pickColor is deterministic for a fixed rng stream', () => {
   assert.deepStrictEqual(c1, c2);
 });
 
+// ── Workstream B: silhouette variety ──────────────────────────────────────
+
+test('silhouetteVariety 0 consumes no RNG — golden still holds when passed explicitly', () => {
+  const layout = generateLayout(mulberry32(42), { ...CLASSIC_PARAMS, silhouetteVariety: 0 });
+  assert.strictEqual(layout.buildings.length, 172);
+  assert.strictEqual(layoutChecksum(layout.buildings), 9097.844684);
+  // No building carries a massing spec in the classic path.
+  assert.ok(layout.buildings.every(b => !b.massing));
+});
+
+test('silhouetteVariety > 0 gives some mid/tall buildings a massing spec', () => {
+  const layout = generateLayout(mulberry32(42), { ...CLASSIC_PARAMS, silhouetteVariety: 1 });
+  const massed = layout.buildings.filter(b => b.massing);
+  assert.ok(massed.length > 0, 'at least some buildings get richer massing');
+  // Only eligible (mid/tall) buildings — none short.
+  for (const b of massed) {
+    assert.ok(b.h >= CLASSIC_PARAMS.maxHeight * 0.30 - 1e-9, 'massed building is tall enough');
+    assert.ok(b.massing.type === 'setback' || b.massing.type === 'podium');
+  }
+});
+
+test('massing segments are contiguous, cover full height, and never grow the footprint', () => {
+  const layout = generateLayout(mulberry32(7), { ...CLASSIC_PARAMS, silhouetteVariety: 1 });
+  for (const b of layout.buildings.filter(x => x.massing)) {
+    const segs = b.massing.segments;
+    assert.ok(Math.abs(segs[0].y0) < 1e-9, 'starts at base');
+    assert.ok(Math.abs(segs[segs.length - 1].y1 - 1) < 1e-9, 'reaches the top');
+    for (let i = 0; i < segs.length; i++) {
+      assert.ok(segs[i].y1 > segs[i].y0, 'segment has positive height');
+      if (i > 0) assert.ok(Math.abs(segs[i].y0 - segs[i - 1].y1) < 1e-9, 'segments are contiguous');
+      assert.ok(segs[i].sw > 0 && segs[i].sw <= 1.0001, 'width scale in (0,1]');
+      assert.ok(segs[i].sd > 0 && segs[i].sd <= 1.0001, 'depth scale in (0,1]');
+    }
+  }
+});
+
+test('silhouette layout is deterministic for a fixed seed + variety', () => {
+  const a = generateLayout(mulberry32(7), { ...CLASSIC_PARAMS, silhouetteVariety: 0.7 });
+  const b = generateLayout(mulberry32(7), { ...CLASSIC_PARAMS, silhouetteVariety: 0.7 });
+  assert.strictEqual(layoutChecksum(a.buildings), layoutChecksum(b.buildings));
+  assert.strictEqual(
+    a.buildings.filter(x => x.massing).length,
+    b.buildings.filter(x => x.massing).length
+  );
+});
+
 console.log(`\n${passed} passed\n`);

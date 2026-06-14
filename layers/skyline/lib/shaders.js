@@ -355,7 +355,23 @@ export const GROUND_FRAG = `
   uniform vec2  u_citySize;
   uniform float u_streetStyle;   // 0 = classic glow, 1 = paved streets
 
+  // Occupancy data texture (paved branch only): R = cell has a building,
+  // G = cell within one of a building. Roads survive only where a building
+  // borders them; everywhere else is greenspace.
+  uniform sampler2D u_occ;
+  uniform vec2 u_occOrigin;      // world coord of cell (0,0) low corner
+  uniform vec2 u_occGrid;        // [cols, rows]
+
   float gHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+  // Presence (building or border) at integer cell (ix,iz). NEAREST sample of
+  // the texel centre; out of the grid → 0 (open greenspace).
+  float occPresent(vec2 cellIdx) {
+    vec2 uv = (cellIdx + 0.5) / u_occGrid;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    vec4 t = texture2D(u_occ, uv);
+    return step(0.5, t.r + t.g);
+  }
 
   void main() {
     float nightAmb = 1.0 - u_sunIntensity * 0.6;
@@ -384,10 +400,19 @@ export const GROUND_FRAG = `
     float rz = mod(v_pos.y, sp) - sp * 0.5;
     float roadHalf = sp * 0.20;
     float walkW    = sp * 0.07;
-    bool roadAlongZ = abs(rx) < roadHalf;   // road running in z
-    bool roadAlongX = abs(rz) < roadHalf;   // road running in x
+
+    // Occupancy gate: a candidate road only becomes real asphalt where a
+    // building borders it; otherwise it (and everywhere else open) is
+    // greenspace. presZ/presX test the two cells flanking the candidate line.
+    vec2 cellF = (v_pos - u_occOrigin) / sp;
+    float ix = floor(cellF.x), iz = floor(cellF.y);
+    float presZ = max(occPresent(vec2(ix, iz)), occPresent(vec2(ix + 1.0, iz)));
+    float presX = max(occPresent(vec2(ix, iz)), occPresent(vec2(ix, iz + 1.0)));
+    bool roadAlongZ = abs(rx) < roadHalf && presZ > 0.5;   // road running in z
+    bool roadAlongX = abs(rz) < roadHalf && presX > 0.5;   // road running in x
     bool onRoad = roadAlongZ || roadAlongX;
     bool intersection = roadAlongZ && roadAlongX;
+    bool nearCity = presZ > 0.5 || presX > 0.5;
 
     // Crosswalk band depth: a faint zebra crossing sits just outside the
     // intersection box on each approach (up to four per 4-way intersection).
@@ -417,17 +442,19 @@ export const GROUND_FRAG = `
           col = mix(col, STREET_MARKING, dash);
         }
       }
-    } else if (abs(rx) < roadHalf + walkW || abs(rz) < roadHalf + walkW) {
+    } else if (nearCity && (abs(rx) < roadHalf + walkW || abs(rz) < roadHalf + walkW)) {
+      // sidewalk band — only where a road actually exists (no orphan fringe)
       col = STREET_SIDEWALK;
     } else {
+      // greenspace: open areas with no bordering buildings
       float blk = gHash(floor(v_pos / sp));
-      col = STREET_ASPHALT * (0.6 + 0.5 * blk);
+      col = STREET_GREENSPACE * (0.7 + 0.5 * blk);
     }
 
     // Night lighting + warm glow pooled on the roadway (driven by streetGlow),
-    // brighter at intersections; daylight wash on top.
+    // brighter at intersections; daylight wash on top. Dead spans never glow.
     float lit = 0.28 + 0.72 * nightAmb;
-    float roadGlow = onRoad ? (0.08 + 0.16 * float(intersection)) * u_streetGlow : 0.0;
+    float roadGlow = (onRoad ? (0.08 + 0.16 * float(intersection)) * u_streetGlow : 0.0);
     vec3 outc = col * lit + vec3(1.0, 0.82, 0.5) * roadGlow * nightAmb;
     outc += col * u_sunIntensity * 0.4;
 
@@ -480,66 +507,119 @@ export const LIGHT_FRAG = `
   }
 `;
 
-// ── Cars ── point sprites whose lane position is computed in the vertex
-// shader from u_time, so a whole fleet animates with zero per-frame CPU.
-// Each car carries a lane (origin + direction + length), a phase, a speed,
-// a color flag (headlight white vs taillight red) and a visibility
-// threshold (compared against u_traffic to fade the fleet in/out).
-export const CAR_VERT = CURVE_GLSL + `
-  attribute vec2 a_origin;   // lane start (x, z)
-  attribute vec4 a_lane;     // dirX, dirZ, length, startPhase (0..1)
-  attribute vec3 a_meta;     // speed (cells/sec), colorFlag (1 = head, 0 = tail), visThreshold
-  uniform mat4 u_viewProj;
-  uniform float u_time;
-  uniform float u_carSpeed;
-  uniform float u_traffic;
-  uniform float u_spacing;   // block size = one cell along a lane
-  uniform float u_pointScale;
-  varying float v_kind;
-
-  float carHash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 13758.5453); }
-
-  void main() {
-    if (a_meta.z > u_traffic) {   // culled when traffic density is below this car's threshold
-      gl_PointSize = 0.0;
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → clipped
-      return;
-    }
-    // Stop-and-go: a car advances one block (cell) per cycle. Speed is in
-    // cells/sec, so it's grid-relative and reads as slow city traffic, not a
-    // streaking light. At each cell boundary a per-car/per-cell hash decides
-    // a "red light": stoppers cross 62% of the cycle then wait out the rest.
-    // smoothstep eases the accel out of a stop and the decel into the next.
-    float sp = u_spacing;
-    float global = a_lane.w * (a_lane.z / sp) + u_time * a_meta.x * u_carSpeed;
+// ── 3D vehicle bodies + headlight pools (traffic realism phase 1) ──
+// Shared lane-walk: advances a car along its lane from u_time, with a GLOBAL
+// deterministic signal clock — z-running cars get green for the first
+// greenFrac of the cycle, x-running cars for the rest; the off-axis group
+// eases to the next cell boundary (the crosswalk stop line) and waits. Pure
+// function so the body and pool programs walk identically (pool sits under
+// its car). Returns (along, fwd.x, fwd.z).
+const CAR_WALK_GLSL = `
+  vec3 carWalk(vec2 origin, vec4 lane, vec3 meta, float t, float carSpeed,
+               float sp, float sigPhase, float greenFrac) {
+    float global = lane.w * (lane.z / sp) + t * meta.x * carSpeed;
     float cell = floor(global);
     float local = fract(global);
-    float red = step(carHash(vec2(a_lane.w * 53.0 + a_meta.x * 17.0, cell)), 0.4);
-    float moveFrac = mix(1.0, 0.62, red);
+    float green0 = step(sigPhase, greenFrac);     // z-axis group green window
+    float isZ = step(abs(lane.x), 0.5);           // z-running car?
+    float myGreen = mix(1.0 - green0, green0, isZ);
+    float moveFrac = mix(1.0, 0.62, 1.0 - myGreen);
     float prog = smoothstep(0.0, 1.0, clamp(local / moveFrac, 0.0, 1.0));
-    float along = mod((cell + prog) * sp, a_lane.z);
-    vec2 pos2 = a_origin + a_lane.xy * along;
-    vec3 curved = curvePosition(vec3(pos2.x, 0.3, pos2.y));
-    vec4 clip = u_viewProj * vec4(curved, 1.0);
-    gl_PointSize = clamp(u_pointScale / clip.w, 2.0, 14.0);
-    gl_Position = clip;
-    v_kind = a_meta.y;
+    return vec3(mod((cell + prog) * sp, lane.z), lane.x, lane.y);
   }
 `;
 
-export const CAR_FRAG = `
+export const CAR_BODY_VERT = CURVE_GLSL + CAR_WALK_GLSL + `
+  attribute vec2 a_origin;   // lane start (x, z)
+  attribute vec4 a_lane;     // dirX, dirZ, length, startPhase
+  attribute vec3 a_meta;     // speed, colorFlag (1 = head end), visThreshold
+  attribute vec3 a_corner;   // unit box corner: x,z in [-0.5,0.5], y in [0,1], +z = front
+  attribute vec3 a_normal;   // local box face normal
+  uniform mat4 u_viewProj;
+  uniform float u_time, u_carSpeed, u_traffic, u_spacing;
+  uniform float u_signalPhase, u_signalGreenFrac;
+  uniform vec3 u_carDims, u_truckDims;   // width, height, length (grid units)
+  varying vec3 v_normal;
+  varying float v_kind, v_frontMix, v_colorSeed;
+  void main() {
+    if (a_meta.z > u_traffic) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    vec3 w = carWalk(a_origin, a_lane, a_meta, u_time, u_carSpeed, u_spacing, u_signalPhase, u_signalGreenFrac);
+    float along = w.x;
+    vec2 fwd = vec2(w.y, w.z);
+    vec2 rgt = vec2(fwd.y, -fwd.x);
+    float truck = step(0.85, fract(a_lane.w * 97.0));   // ~15% trucks
+    vec3 dims = mix(u_carDims, u_truckDims, truck);
+    vec3 lp = a_corner * dims;
+    vec2 c2 = a_origin + fwd * along;
+    // +0.01 base bias so depth-writing bodies don't z-fight the ground (y=0).
+    vec3 worldPos = vec3(c2.x, 0.01, c2.y)
+      + vec3(rgt.x, 0.0, rgt.y) * lp.x
+      + vec3(0.0, 1.0, 0.0) * lp.y
+      + vec3(fwd.x, 0.0, fwd.y) * lp.z;
+    gl_Position = u_viewProj * vec4(curvePosition(worldPos), 1.0);
+    v_normal = normalize(vec3(rgt.x * a_normal.x + fwd.x * a_normal.z, a_normal.y, rgt.y * a_normal.x + fwd.y * a_normal.z));
+    v_kind = a_meta.y;
+    v_frontMix = a_corner.z * 0.5 + 0.5;            // 1 at the front face, 0 at the back
+    v_colorSeed = fract(a_lane.w * 131.0 + a_meta.x * 53.0);
+  }
+`;
+
+export const CAR_BODY_FRAG = `
   precision mediump float;
   uniform float u_sunIntensity;
-  uniform vec3 u_carHead;
-  uniform vec3 u_carTail;
-  varying float v_kind;
+  uniform vec3 u_paint0, u_paint1, u_paint2, u_paint3;
+  uniform vec3 u_carTail, u_headlightWarm;
+  varying vec3 v_normal;
+  varying float v_kind, v_frontMix, v_colorSeed;
   void main() {
-    float d = length(gl_PointCoord - 0.5);
-    if (d > 0.5) discard;
-    float core = exp(-d * 10.0), halo = exp(-d * 3.5);
-    float b = core * 1.6 + halo * 0.5;
+    float idx = floor(v_colorSeed * 4.0);           // unrolled palette pick (no dynamic index)
+    vec3 base = u_paint0;
+    if (idx > 2.5) base = u_paint3; else if (idx > 1.5) base = u_paint2; else if (idx > 0.5) base = u_paint1;
+    float nightAmb = 1.0 - u_sunIntensity * 0.6;
+    vec3 sunDir = normalize(vec3(0.4, 0.75, 0.3));
+    float diff = max(0.0, dot(normalize(v_normal), sunDir));
+    vec3 col = base * (0.30 * nightAmb + 0.10 + diff * 0.5 * u_sunIntensity);
+    col += u_headlightWarm * smoothstep(0.78, 1.0, v_frontMix) * (v_kind > 0.5 ? 1.0 : 0.0);  // headlights
+    col += u_carTail * smoothstep(0.78, 1.0, 1.0 - v_frontMix) * 0.5;                          // taillights
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+export const CAR_POOL_VERT = CURVE_GLSL + CAR_WALK_GLSL + `
+  attribute vec2 a_origin;
+  attribute vec4 a_lane;
+  attribute vec3 a_meta;
+  attribute vec2 a_quad;     // unit pool footprint corner in [-0.5,0.5]
+  uniform mat4 u_viewProj;
+  uniform float u_time, u_carSpeed, u_traffic, u_spacing;
+  uniform float u_signalPhase, u_signalGreenFrac;
+  varying float v_radial;
+  void main() {
+    // Only the headlight end (colorFlag 1) casts a pool; fades out with traffic.
+    if (a_meta.z > u_traffic || a_meta.y < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    vec3 w = carWalk(a_origin, a_lane, a_meta, u_time, u_carSpeed, u_spacing, u_signalPhase, u_signalGreenFrac);
+    float along = w.x;
+    vec2 fwd = vec2(w.y, w.z);
+    vec2 rgt = vec2(fwd.y, -fwd.x);
+    vec2 c2 = a_origin + fwd * along;
+    float poolStart = 0.5, poolLen = 1.6, poolW = 0.7;
+    vec2 q = c2 + fwd * (poolStart + (a_quad.y + 0.5) * poolLen) + rgt * (a_quad.x * poolW);
+    gl_Position = u_viewProj * vec4(curvePosition(vec3(q.x, 0.02, q.y)), 1.0);
+    v_radial = length(a_quad) * 2.0;
+  }
+`;
+
+export const CAR_POOL_FRAG = `
+  precision mediump float;
+  uniform float u_traffic, u_sunIntensity;
+  uniform vec3 u_headlightWarm;
+  varying float v_radial;
+  void main() {
+    // 1→0 falloff from pool centre to rim. Ascending-edge smoothstep then
+    // inverted — GLSL ES 1.00 leaves smoothstep undefined when edge0 >= edge1.
+    float fall = 1.0 - smoothstep(0.0, 1.0, v_radial);
     float vis = 0.4 + 0.6 * (1.0 - u_sunIntensity);
-    vec3 col = (v_kind > 0.5 ? u_carHead : u_carTail) * b * vis;
-    gl_FragColor = vec4(col, b * vis);
+    vec3 col = u_headlightWarm * fall * u_traffic * vis * 0.6;
+    gl_FragColor = vec4(col, fall * u_traffic * vis * 0.5);
   }
 `;

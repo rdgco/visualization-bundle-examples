@@ -8,9 +8,10 @@
  * which is exactly what endless mode needs: call it per tile with that
  * tile's bounds + per-tile seed and the streams line up across borders.
  *
- * The motion (stop-and-go, red lights, speed) lives in the car vertex
- * shader (CAR_VERT), driven by u_time — so a whole fleet animates with zero
- * per-frame CPU and this module only ever runs at build time.
+ * The motion (lane walk, signal stop-and-go, speed) lives in the vehicle
+ * vertex shaders (CAR_BODY_VERT / CAR_POOL_VERT, sharing CAR_WALK_GLSL),
+ * driven by u_time — so a whole fleet animates with zero per-frame CPU and
+ * this module only ever runs at build time.
  *
  * Car instance layout — 9 floats:
  *   origin.x, origin.z,                  // lane start in world space
@@ -36,8 +37,12 @@ const SPEED_SPAN = 0.12;
  */
 export function roadCentres(half, spacing) {
   const first = Math.ceil(-half / spacing + 0.5) * spacing - spacing * 0.5;
+  // Index-based (first + i*spacing) rather than accumulating `c += spacing`,
+  // so centres stay exactly on the mod(coord, sp) == sp/2 grid even at the
+  // large absolute-world extents endless mode will use (no FP drift).
+  const n = Math.floor((half + 1e-6 - first) / spacing);
   const out = [];
-  for (let c = first; c <= half + 1e-6; c += spacing) out.push(c);
+  for (let i = 0; i <= n; i++) out.push(first + i * spacing);
   return out;
 }
 
@@ -51,35 +56,46 @@ export function roadCentres(half, spacing) {
  * @param {number} opts.spacing     block size (road grid pitch)
  * @param {number} opts.seed        deterministic seed (per tile in endless mode)
  * @param {number} [opts.carsPerRoad=6]
+ * @param {Array<{axis:0|1,x0:number,z0:number,length:number}>} [opts.segments]
+ *   Optional explicit lane set (from roads.roadSegments) so cars only spawn on
+ *   real, building-bordered streets. When omitted, lanes are the full road
+ *   grid (every roadCentre line) — byte-identical to the pre-occupancy
+ *   behavior. A segments list covering every roadCentre line, in the same
+ *   order (all axis-0 then all axis-1), reproduces the no-segments output.
  * @returns {Float32Array} CAR_FLOATS per car
  */
-export function generateTrafficLanes({ halfW, halfD, spacing, seed, carsPerRoad = 6 }) {
+export function generateTrafficLanes({ halfW, halfD, spacing, seed, carsPerRoad = 6, segments = null }) {
   const out = [];
   const rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   const laneOff = spacing * 0.20 * 0.45;   // offset from road centre → two opposing lanes
 
-  // Roads running in z (constant x at each x-axis road centre).
-  for (const cx of roadCentres(halfW, spacing)) {
+  // Without an explicit list, lanes are the full road grid: every z-running
+  // centre line first, then every x-running line — the exact order (and thus
+  // RNG draw order) the original two-loop generator used.
+  const lanes = segments || [
+    ...roadCentres(halfW, spacing).map(cx => ({ axis: 0, x0: cx, z0: -halfD, length: halfD * 2 })),
+    ...roadCentres(halfD, spacing).map(cz => ({ axis: 1, x0: -halfW, z0: cz, length: halfW * 2 }))
+  ];
+
+  for (const s of lanes) {
     for (let i = 0; i < carsPerRoad; i++) {
       const dir = rng() < 0.5 ? 1 : -1;
-      const oz = dir > 0 ? -halfD : halfD;
-      out.push(
-        cx + dir * laneOff, oz,
-        0, dir, halfD * 2, rng(),
-        SPEED_MIN + rng() * SPEED_SPAN, dir > 0 ? 1 : 0, rng()
-      );
-    }
-  }
-  // Roads running in x (constant z at each z-axis road centre).
-  for (const cz of roadCentres(halfD, spacing)) {
-    for (let i = 0; i < carsPerRoad; i++) {
-      const dir = rng() < 0.5 ? 1 : -1;
-      const ox = dir > 0 ? -halfW : halfW;
-      out.push(
-        ox, cz + dir * laneOff,
-        dir, 0, halfW * 2, rng(),
-        SPEED_MIN + rng() * SPEED_SPAN, dir > 0 ? 1 : 0, rng()
-      );
+      // dir>0 starts at the low end of the lane; dir<0 at the high end.
+      if (s.axis === 0) {
+        const oz = dir > 0 ? s.z0 : s.z0 + s.length;
+        out.push(
+          s.x0 + dir * laneOff, oz,
+          0, dir, s.length, rng(),
+          SPEED_MIN + rng() * SPEED_SPAN, dir > 0 ? 1 : 0, rng()
+        );
+      } else {
+        const ox = dir > 0 ? s.x0 : s.x0 + s.length;
+        out.push(
+          ox, s.z0 + dir * laneOff,
+          dir, 0, s.length, rng(),
+          SPEED_MIN + rng() * SPEED_SPAN, dir > 0 ? 1 : 0, rng()
+        );
+      }
     }
   }
   return new Float32Array(out);

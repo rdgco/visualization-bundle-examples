@@ -83,9 +83,16 @@ export const CONTEMPORARY = {
     sidewalk: [0.14, 0.14, 0.155],
     marking: [0.52, 0.47, 0.30],     // warm faded paint (lane lines)
     crosswalk: [0.58, 0.58, 0.60],
+    greenspace: [0.04, 0.07, 0.03],  // dim night grass in open (no-building) areas
     lightColor: [1.0, 0.84, 0.54],   // warm-white streetlight glow
     carHead: [0.92, 0.94, 1.0],      // headlight white (one travel direction)
-    carTail: [1.0, 0.13, 0.06]       // taillight red (the other)
+    carTail: [1.0, 0.13, 0.06],      // taillight red (the other)
+    headlightWarm: [1.0, 0.93, 0.78], // warm headlight emissive + road pool
+    // Dim night car-paint tones; one picked per car by hash (uniform array).
+    bodyPaint: [
+      [0.10, 0.10, 0.12], [0.12, 0.10, 0.10],
+      [0.09, 0.11, 0.13], [0.11, 0.11, 0.11]
+    ]
   }
 };
 
@@ -121,6 +128,7 @@ export function styleFragGLSL(style = DEFAULT_STYLE) {
     `#define STREET_ASPHALT   ${glslVec3(s.asphalt)}`,
     `#define STREET_SIDEWALK  ${glslVec3(s.sidewalk)}`,
     `#define STREET_MARKING   ${glslVec3(s.marking)}`,
-    `#define STREET_CROSSWALK ${glslVec3(s.crosswalk)}`
+    `#define STREET_CROSSWALK ${glslVec3(s.crosswalk)}`,
+    `#define STREET_GREENSPACE ${glslVec3(s.greenspace)}`
   ].join('\n');
 }

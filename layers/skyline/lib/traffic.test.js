@@ -85,4 +85,38 @@ test('car count scales with carsPerRoad', () => {
   assert.ok(many.length === few.length * 4, '8 vs 2 cars per road → 4x');
 });
 
+// ── occupancy-derived segments (traffic realism phase 1) ──────────────────
+
+// The full road grid as an explicit segment list, in the same order the
+// no-segments path uses (all z-running lines, then all x-running lines).
+function fullCoverageSegments(r) {
+  return [
+    ...roadCentres(r.halfW, r.spacing).map(cx => ({ axis: 0, x0: cx, z0: -r.halfD, length: r.halfD * 2 })),
+    ...roadCentres(r.halfD, r.spacing).map(cz => ({ axis: 1, x0: -r.halfW, z0: cz, length: r.halfW * 2 }))
+  ];
+}
+
+test('segments covering every road line reproduce the no-segments output byte-for-byte', () => {
+  const baseline = generateTrafficLanes(REGION);
+  const withSegs = generateTrafficLanes({ ...REGION, segments: fullCoverageSegments(REGION) });
+  assert.deepStrictEqual(Array.from(withSegs), Array.from(baseline));
+});
+
+test('a reduced segment list yields fewer, still well-formed cars', () => {
+  const full = fullCoverageSegments(REGION);
+  const half = full.filter((_, i) => i % 2 === 0);
+  const out = generateTrafficLanes({ ...REGION, segments: half });
+  assert.strictEqual(out.length, half.length * 6 * CAR_FLOATS, 'cars per surviving segment');
+  assert.ok(out.length < generateTrafficLanes(REGION).length, 'strictly fewer cars');
+  for (let i = 0; i < out.length; i += CAR_FLOATS) {
+    const dirX = out[i + 2], dirZ = out[i + 3];
+    assert.ok((Math.abs(dirX) === 1 && dirZ === 0) || (dirX === 0 && Math.abs(dirZ) === 1), 'axis-aligned');
+  }
+});
+
+test('an empty segment list produces no cars (open area = no traffic)', () => {
+  const out = generateTrafficLanes({ ...REGION, segments: [] });
+  assert.strictEqual(out.length, 0);
+});
+
 console.log(`\n${passed} passed\n`);

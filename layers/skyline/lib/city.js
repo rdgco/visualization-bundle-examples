@@ -34,11 +34,16 @@ import {
   BUILDING_VERT, composeBuildingFrag,
   GROUND_VERT, composeGroundFrag,
   LIGHT_VERT, LIGHT_FRAG,
-  CAR_VERT, CAR_FRAG
+  CAR_BODY_VERT, CAR_BODY_FRAG, CAR_POOL_VERT, CAR_POOL_FRAG
 } from './shaders.js';
 import { DEFAULT_STYLE, styleFragGLSL } from './style.js';
 import { mulberry32, generateLayout } from './layout.js';
-import { generateTrafficLanes, roadCentres, CAR_FLOATS } from './traffic.js';
+import { generateTrafficLanes, roadCentres } from './traffic.js';
+import { buildOccupancy, roadSegments, worldToCell, presentAt } from './roads.js';
+import {
+  expandVehicleBodies, BODY_SIZES, BODY_FLOATS, POOL_SIZES, POOL_FLOATS,
+  CAR_DIMS, TRUCK_DIMS
+} from './vehicles.js';
 import { buildFootprintPolygon, generatePrism, generateRoofTri, generateRoofQuad } from './geometry.js';
 
 // ============================================================================
@@ -67,6 +72,59 @@ const WAVE_BASE_WIDTH = 0.18; // gaussian sigma at injection
 const WAVE_DECAY = 0.985; // amp *= per ~16ms tick (cribbed from fractal)
 const WAVE_WIDTH_GROW = 0.0005; // sigma += per tick (waves spread as they age)
 const WAVE_KILL_POS = 1.6; // pos past which a slot is force-killed
+
+// Traffic signal clock (phase 1): one global deterministic cycle drives every
+// intersection in lockstep. SIGNAL_CYCLE seconds per full x+z alternation;
+// z-running cars are green for the first SIGNAL_GREEN_FRAC of the cycle, then
+// x-running cars. (Per-intersection green-wave offsets are phase 2.)
+const SIGNAL_CYCLE = 6.0;
+const SIGNAL_GREEN_FRAC = 0.5;
+
+// Upload an occupancy grid as an RGBA8 data texture. NEAREST + CLAMP_TO_EDGE
+// with no mips is mandatory for the NPOT grid dims (some WebGL1 drivers render
+// NPOT textures black otherwise). Sampled fragment-only in the paved ground.
+function createOccTexture(gl, occ) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, occ.cols, occ.rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, occ.grid);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  return tex;
+}
+
+// Interleaved-attribute binding for the vehicle VBOs. Offsets are derived from
+// the named float-count sizes (BODY_SIZES / POOL_SIZES) — never hardcoded — so
+// the stride/offsets can't silently desync from vehicles.js.
+function attrLayout(names, sizes) {
+  const out = [];
+  let off = 0;
+  for (let i = 0; i < names.length; i++) {
+    out.push({ name: names[i], size: sizes[i], offset: off });
+    off += sizes[i] * 4;
+  }
+  return out;
+}
+const BODY_ATTRS = attrLayout(['a_origin', 'a_lane', 'a_meta', 'a_corner', 'a_normal'], BODY_SIZES);
+const POOL_ATTRS = attrLayout(['a_origin', 'a_lane', 'a_meta', 'a_quad'], POOL_SIZES);
+
+function bindInterleaved(gl, sh, vbo, attrs, stride) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  for (const a of attrs) {
+    const loc = sh.attr(a.name);
+    if (loc < 0) continue;
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, a.size, gl.FLOAT, false, stride, a.offset);
+  }
+}
+function unbindInterleaved(gl, sh, attrs) {
+  for (const a of attrs) {
+    const loc = sh.attr(a.name);
+    if (loc >= 0) gl.disableVertexAttribArray(loc);
+  }
+}
 
 // ============================================================================
 // City class
@@ -121,7 +179,9 @@ class City {
     this.buildingShader = createShaderProgram(gl, BUILDING_VERT, composeBuildingFrag(styleGLSL));
     this.groundShader = createShaderProgram(gl, GROUND_VERT, composeGroundFrag(styleGLSL));
     this.lightShader = createShaderProgram(gl, LIGHT_VERT, LIGHT_FRAG);
-    this.carShader = createShaderProgram(gl, CAR_VERT, CAR_FRAG);
+    // Vehicle bodies (opaque, depth-written) + headlight ground pools (additive).
+    this.carBodyShader = createShaderProgram(gl, CAR_BODY_VERT, CAR_BODY_FRAG);
+    this.carPoolShader = createShaderProgram(gl, CAR_POOL_VERT, CAR_POOL_FRAG);
 
     this._generate();
   }
@@ -134,7 +194,9 @@ class City {
     if (this.roofVBO) gl.deleteBuffer(this.roofVBO);
     if (this.groundVBO) gl.deleteBuffer(this.groundVBO);
     if (this.lightVBO) gl.deleteBuffer(this.lightVBO);
-    if (this.carVBO) gl.deleteBuffer(this.carVBO);
+    if (this.bodyVBO) gl.deleteBuffer(this.bodyVBO);
+    if (this.poolVBO) gl.deleteBuffer(this.poolVBO);
+    if (this.occTexture) gl.deleteTexture(this.occTexture);
 
     const rng = mulberry32(this.seed);
     const layout = generateLayout(rng, {
@@ -263,24 +325,41 @@ class City {
       }
     }
 
-    // ── Street level (workstream C): streetlights + cars, paved only ──
-    // Streetlights sit at each road intersection; cars come from the traffic
-    // subsystem (lib/traffic.js) — pure + deterministic, so the same call
-    // shape drops onto a per-tile region in endless mode. Both use the shared
-    // roadCentres() grid so lights and lanes always align. traffic / carSpeed
-    // then animate the fleet via uniforms with no rebuild.
-    let carData = null;
+    // ── Street level (workstream C + traffic realism phase 1): paved only ──
+    // Occupancy (lib/roads.js) drives which candidate roads are real (vs
+    // greenspace) and which lanes carry cars; the traffic subsystem produces
+    // the fleet, and lib/vehicles.js expands it into 3D body + headlight-pool
+    // geometry. All pure/deterministic and tile-shaped for endless. Streetlights
+    // sit at building-bordered intersections; cars/streetlights only exist where
+    // a real street does. traffic / carSpeed animate the fleet via uniforms.
+    let bodyExp = null;
     if (this.streetStyle >= 0.5) {
       const sp = this.spacing;
       const halfW = this.citySize[0] * 0.5, halfD = this.citySize[1] * 0.5;
       const lc = this.style.street.lightColor;
-      const cxs = roadCentres(halfW, sp), czs = roadCentres(halfD, sp);
-      for (const cx of cxs) {
-        for (const cz of czs) {
-          lightBuf.push(cx, 0.9, cz, -1.0, lc[0], lc[1], lc[2]);  // steady warm streetlight
+
+      const occ = buildOccupancy({ buildings: layout.buildings, spacing: sp, citySize: this.citySize });
+      this.occTexture = createOccTexture(gl, occ);
+      this.occOrigin = [occ.originX, occ.originZ];
+      this.occGrid = [occ.cols, occ.rows];
+
+      // Streetlights at intersections that border a building (skip greenspace).
+      for (const cx of roadCentres(halfW, sp)) {
+        for (const cz of roadCentres(halfD, sp)) {
+          const [cix, ciz] = worldToCell(cx, cz, occ.originX, occ.originZ, sp);
+          const bordered = presentAt(occ.grid, occ.cols, occ.rows, cix, ciz) ||
+            presentAt(occ.grid, occ.cols, occ.rows, cix + 1, ciz) ||
+            presentAt(occ.grid, occ.cols, occ.rows, cix, ciz + 1) ||
+            presentAt(occ.grid, occ.cols, occ.rows, cix + 1, ciz + 1);
+          if (bordered) lightBuf.push(cx, 0.9, cz, -1.0, lc[0], lc[1], lc[2]);
         }
       }
-      carData = generateTrafficLanes({ halfW, halfD, spacing: sp, seed: this.seed });
+
+      const segs = roadSegments(occ, sp).segments;
+      const carData = generateTrafficLanes({ halfW, halfD, spacing: sp, seed: this.seed, segments: segs });
+      bodyExp = expandVehicleBodies(carData);
+    } else {
+      this.occTexture = null;
     }
 
     // Build VBOs
@@ -311,10 +390,16 @@ class City {
     this.lightCount = lightBuf.length / 7;
     this.lightVBO = lightBuf.length > 0 ? createBuffer(gl, this.lightData) : null;
 
-    // Car points (from the traffic subsystem): CAR_FLOATS each.
-    this.carData = carData || new Float32Array(0);
-    this.carCount = this.carData.length / CAR_FLOATS;
-    this.carVBO = this.carData.length > 0 ? createBuffer(gl, this.carData) : null;
+    // Vehicle geometry (from lib/vehicles.js): box bodies + headlight pools.
+    if (bodyExp && bodyExp.bodyCount > 0) {
+      this.bodyVBO = createBuffer(gl, bodyExp.bodyData);
+      this.bodyCount = bodyExp.bodyCount;
+      this.poolVBO = createBuffer(gl, bodyExp.poolData);
+      this.poolCount = bodyExp.poolCount;
+    } else {
+      this.bodyVBO = null; this.bodyCount = 0;
+      this.poolVBO = null; this.poolCount = 0;
+    }
   }
 
   update(dt) {
@@ -360,6 +445,15 @@ class City {
       gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
       gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
 
+      // Occupancy texture gates paved roads vs greenspace (unread in glow mode).
+      if (this.streetStyle >= 0.5 && this.occTexture) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.occTexture);
+        gl.uniform1i(sh.uniform('u_occ'), 0);
+        gl.uniform2fv(sh.uniform('u_occOrigin'), this.occOrigin);
+        gl.uniform2fv(sh.uniform('u_occGrid'), this.occGrid);
+      }
+
       gl.bindBuffer(gl.ARRAY_BUFFER, this.groundVBO);
       const posLoc = sh.attr('a_position');
       gl.enableVertexAttribArray(posLoc);
@@ -404,46 +498,69 @@ class City {
       gl.disable(gl.BLEND);
     }
 
-    // ── Cars ── animated point sprites; positions computed in the vertex
-    // shader from u_time, so traffic / carSpeed are pure uniform changes.
-    // traffic <= 0 culls the whole fleet (each car's visThreshold > 0).
-    if (this.carVBO && this.carCount > 0 && this.traffic > 0) {
-      const sh = this.carShader;
+    // ── Vehicles ── 3D box bodies (opaque, depth-written) then headlight
+    // ground pools (additive). Lane position + global signal-stop are computed
+    // in the vertex shaders from u_time, so traffic / carSpeed stay pure
+    // uniform changes. traffic <= 0 culls the whole fleet.
+    if (this.bodyVBO && this.bodyCount > 0 && this.traffic > 0) {
       const st = this.style.street;
-      gl.useProgram(sh.program);
-      gl.uniformMatrix4fv(sh.uniform('u_viewProj'), false, viewProj);
-      gl.uniform1f(sh.uniform('u_time'), this.time);
-      gl.uniform1f(sh.uniform('u_carSpeed'), this.carSpeed);
-      gl.uniform1f(sh.uniform('u_traffic'), this.traffic);
-      gl.uniform1f(sh.uniform('u_spacing'), this.spacing);
-      gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
-      gl.uniform1f(sh.uniform('u_pointScale'), 220);
-      gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
-      gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
-      gl.uniform3fv(sh.uniform('u_carHead'), st.carHead);
-      gl.uniform3fv(sh.uniform('u_carTail'), st.carTail);
+      const sigPhase = (this.time % SIGNAL_CYCLE) / SIGNAL_CYCLE;
 
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      gl.depthMask(false);
+      // Bodies: opaque, depth test + write, normal (non-additive) blend off.
+      {
+        const sh = this.carBodyShader;
+        gl.useProgram(sh.program);
+        gl.uniformMatrix4fv(sh.uniform('u_viewProj'), false, viewProj);
+        gl.uniform1f(sh.uniform('u_time'), this.time);
+        gl.uniform1f(sh.uniform('u_carSpeed'), this.carSpeed);
+        gl.uniform1f(sh.uniform('u_traffic'), this.traffic);
+        gl.uniform1f(sh.uniform('u_spacing'), this.spacing);
+        gl.uniform1f(sh.uniform('u_signalPhase'), sigPhase);
+        gl.uniform1f(sh.uniform('u_signalGreenFrac'), SIGNAL_GREEN_FRAC);
+        gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
+        gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
+        gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
+        gl.uniform3fv(sh.uniform('u_carDims'), CAR_DIMS);
+        gl.uniform3fv(sh.uniform('u_truckDims'), TRUCK_DIMS);
+        gl.uniform3fv(sh.uniform('u_paint0'), st.bodyPaint[0]);
+        gl.uniform3fv(sh.uniform('u_paint1'), st.bodyPaint[1]);
+        gl.uniform3fv(sh.uniform('u_paint2'), st.bodyPaint[2]);
+        gl.uniform3fv(sh.uniform('u_paint3'), st.bodyPaint[3]);
+        gl.uniform3fv(sh.uniform('u_carTail'), st.carTail);
+        gl.uniform3fv(sh.uniform('u_headlightWarm'), st.headlightWarm);
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.carVBO);
-      const oLoc = sh.attr('a_origin');
-      const lLoc = sh.attr('a_lane');
-      const mLoc = sh.attr('a_meta');
-      gl.enableVertexAttribArray(oLoc);
-      gl.vertexAttribPointer(oLoc, 2, gl.FLOAT, false, 36, 0);
-      gl.enableVertexAttribArray(lLoc);
-      gl.vertexAttribPointer(lLoc, 4, gl.FLOAT, false, 36, 8);
-      gl.enableVertexAttribArray(mLoc);
-      gl.vertexAttribPointer(mLoc, 3, gl.FLOAT, false, 36, 24);
-      gl.drawArrays(gl.POINTS, 0, this.carCount);
-      gl.disableVertexAttribArray(oLoc);
-      gl.disableVertexAttribArray(lLoc);
-      gl.disableVertexAttribArray(mLoc);
+        gl.disable(gl.BLEND);
+        gl.depthMask(true);
+        bindInterleaved(gl, sh, this.bodyVBO, BODY_ATTRS, BODY_FLOATS * 4);
+        gl.drawArrays(gl.TRIANGLES, 0, this.bodyCount);
+        unbindInterleaved(gl, sh, BODY_ATTRS);
+      }
 
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
+      // Headlight pools: additive, depth-tested but not depth-written.
+      {
+        const sh = this.carPoolShader;
+        gl.useProgram(sh.program);
+        gl.uniformMatrix4fv(sh.uniform('u_viewProj'), false, viewProj);
+        gl.uniform1f(sh.uniform('u_time'), this.time);
+        gl.uniform1f(sh.uniform('u_carSpeed'), this.carSpeed);
+        gl.uniform1f(sh.uniform('u_traffic'), this.traffic);
+        gl.uniform1f(sh.uniform('u_spacing'), this.spacing);
+        gl.uniform1f(sh.uniform('u_signalPhase'), sigPhase);
+        gl.uniform1f(sh.uniform('u_signalGreenFrac'), SIGNAL_GREEN_FRAC);
+        gl.uniform1f(sh.uniform('u_sunIntensity'), this.sunIntensity);
+        gl.uniform1f(sh.uniform('u_curvature'), this.curvature);
+        gl.uniform1f(sh.uniform('u_sphereRadius'), this._sphereRadius());
+        gl.uniform3fv(sh.uniform('u_headlightWarm'), st.headlightWarm);
+
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.depthMask(false);
+        bindInterleaved(gl, sh, this.poolVBO, POOL_ATTRS, POOL_FLOATS * 4);
+        gl.drawArrays(gl.TRIANGLES, 0, this.poolCount);
+        unbindInterleaved(gl, sh, POOL_ATTRS);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
     }
   }
 
@@ -664,11 +781,14 @@ class City {
     if (this.roofVBO) gl.deleteBuffer(this.roofVBO);
     if (this.groundVBO) gl.deleteBuffer(this.groundVBO);
     if (this.lightVBO) gl.deleteBuffer(this.lightVBO);
-    if (this.carVBO) gl.deleteBuffer(this.carVBO);
+    if (this.bodyVBO) gl.deleteBuffer(this.bodyVBO);
+    if (this.poolVBO) gl.deleteBuffer(this.poolVBO);
+    if (this.occTexture) gl.deleteTexture(this.occTexture);
     gl.deleteProgram(this.buildingShader.program);
     gl.deleteProgram(this.groundShader.program);
     gl.deleteProgram(this.lightShader.program);
-    gl.deleteProgram(this.carShader.program);
+    gl.deleteProgram(this.carBodyShader.program);
+    gl.deleteProgram(this.carPoolShader.program);
   }
 }
 
